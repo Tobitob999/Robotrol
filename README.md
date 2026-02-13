@@ -26,9 +26,13 @@ Profiles live in `Moveo.json`, `Red15.json`, and `EB300.json`. Use the profile s
 
 ## Repo layout
 - `Robotrol_FluidNC_v6_2.py` main UI
+- `config_profiles.py` profile loader
+- `Moveo.json`, `Red15.json`, `EB300.json` profiles
 - `tcp_pose_module_v3.py` FK/TCP panel
 - `tcp_world_kinematics_frame.py` TCP sequence generator
-- `robotik_chess_stack/` edge/agent chess stack and specs
+- `fluidnc_updater_v2.py` OTA/serial tools
+- `camera_capturev_v1_1.py`, `board_pose_v1.py`, `chess_vision_ui.py`, `pickplace_ui.py` vision/calibration UI
+- `configs/`, `chess/`, `perception/`, `control/`, `planning/`, `simulation/`, `model/` supporting modules/configs
 
 ## Notes
 - Build artifacts (`build/`, `dist/`) and caches are not tracked in Git.
