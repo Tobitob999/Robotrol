@@ -1,0 +1,16 @@
+[Unit]
+Description=Edge Core Service (Robotik-Schach)
+After=network.target
+
+[Service]
+Type=simple
+User=edge
+WorkingDirectory=/opt/edge
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/edge/src
+ExecStart=/opt/edge/venv/bin/python -m edge_core.main --config /etc/edge/edge.yaml
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
