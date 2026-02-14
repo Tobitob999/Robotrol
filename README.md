@@ -36,4 +36,3 @@ Profiles live in `Moveo.json`, `Red15.json`, and `EB300.json`. Use the profile s
 
 ## Notes
 - Build artifacts (`build/`, `dist/`) and caches are not tracked in Git.
-- No license is specified yet.
