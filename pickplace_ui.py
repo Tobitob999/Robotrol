@@ -1,4 +1,4 @@
-﻿import json
+import json
 import math
 import os
 import threading
@@ -8,6 +8,7 @@ from tkinter import ttk
 
 from control import config as config_loader
 from control.app import build_pipeline
+from learning.tnt_self_learning import TntSelfLearningManager
 from control.transforms import (
     make_transform,
     matmul,
@@ -45,14 +46,21 @@ class PickPlaceTab(ttk.Frame):
         self._camera_capture = camera_capture
 
         self._status_var = tk.StringVar(value="Not initialized")
+        self._stack_index_var = tk.StringVar(value="Stack index: n/a")
         self._run_count = tk.IntVar(value=1)
         self._sim_cycles = tk.IntVar(value=1000)
         self._detect_var = tk.StringVar(value="No detection yet.")
         self._execute_app = execute_app
+        self._learner = None
+        self._learning_enabled_var = tk.BooleanVar(value=False)
+        self._learning_mode_var = tk.StringVar(value="shadow")
+        self._learning_status_var = tk.StringVar(value="Learning: disabled")
+        self._learning_event_count = 0
+        self._last_cycle_ctx = {}
 
         self._pattern_cols_var = tk.IntVar(value=7)
         self._pattern_rows_var = tk.IntVar(value=7)
-        self._square_size_var = tk.DoubleVar(value=30.0)
+        self._square_size_var = tk.DoubleVar(value=32.0)
         self._marker_axis_var = tk.StringVar(value="z")
         self._marker_sign_var = tk.IntVar(value=1)
         self._tnt_h1_low_var = tk.IntVar(value=0)
@@ -79,6 +87,7 @@ class PickPlaceTab(ttk.Frame):
         self._cam_calib_result_var = tk.StringVar(value="")
 
         self._build_ui()
+        self._refresh_learning_from_manager()
         self._load_calibration_into_ui()
 
     def _build_ui(self):
@@ -122,9 +131,28 @@ class PickPlaceTab(ttk.Frame):
         ttk.Label(btns, text="Cycles:").grid(row=0, column=1, padx=(0, 4))
         ttk.Entry(btns, textvariable=self._run_count, width=6).grid(row=0, column=2, padx=(0, 6))
         ttk.Button(btns, text="Run N Cycles", command=self._run_n_cycles).grid(row=0, column=3)
+        ttk.Button(btns, text="Reset Stack", command=self._reset_stack_index).grid(row=0, column=4, padx=(6, 0))
+        ttk.Label(btns, textvariable=self._stack_index_var).grid(row=0, column=5, padx=(10, 0), sticky="w")
+
+        learn = ttk.LabelFrame(tab, text="Self-Learning (TNT)")
+        learn.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+        ttk.Checkbutton(
+            learn,
+            text="Enable",
+            variable=self._learning_enabled_var,
+            command=self._on_learning_toggle,
+        ).grid(row=0, column=0, padx=6, pady=4, sticky="w")
+        ttk.Label(learn, text="Mode:").grid(row=0, column=1, padx=(6, 2), pady=4, sticky="w")
+        mode = ttk.Combobox(learn, textvariable=self._learning_mode_var, values=["shadow", "active"], width=8, state="readonly")
+        mode.grid(row=0, column=2, padx=2, pady=4, sticky="w")
+        mode.bind("<<ComboboxSelected>>", lambda _e: self._on_learning_mode_change())
+        ttk.Button(learn, text="Reset Policy", command=self._reset_learning_policy).grid(row=0, column=3, padx=6, pady=4)
+        ttk.Button(learn, text="Show Status", command=self._show_learning_status).grid(row=0, column=4, padx=6, pady=4)
+        ttk.Label(learn, textvariable=self._learning_status_var).grid(row=0, column=5, padx=6, pady=4, sticky="w")
+        learn.columnconfigure(5, weight=1)
 
         log_frame = ttk.LabelFrame(tab, text="Pick & Place Log")
-        log_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
+        log_frame.grid(row=2, column=0, sticky="nsew", padx=6, pady=6)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self._log_text = tk.Text(log_frame, height=12, wrap="word")
@@ -133,7 +161,7 @@ class PickPlaceTab(ttk.Frame):
         scrollbar.grid(row=0, column=1, sticky="ns")
         self._log_text.configure(yscrollcommand=scrollbar.set)
 
-        tab.rowconfigure(1, weight=1)
+        tab.rowconfigure(2, weight=1)
 
     def _build_sim_tab(self, tab):
         tab.columnconfigure(1, weight=1)
@@ -188,6 +216,8 @@ class PickPlaceTab(ttk.Frame):
         ttk.Button(btns, text="Save Board Config", command=self._save_board_config).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Compute base_T_cam", command=self._compute_base_T_cam).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Save base_T_cam", command=self._save_base_T_cam).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Validate base_T_cam", command=self._validate_base_T_cam_once).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Simulate calibration", command=self._simulate_base_cam_noise).pack(side=tk.LEFT, padx=4)
 
         grid = ttk.Frame(tab)
         grid.pack(fill="x", padx=6, pady=6)
@@ -527,51 +557,53 @@ class PickPlaceTab(ttk.Frame):
         tab.columnconfigure(0, weight=1)
         tab.rowconfigure(0, weight=1)
         text = (
-            "Setup + Kalibrierung (v6) - Schritt fuer Schritt\n"
+            "Setup + Calibration (v6.3) - Step by step\n"
             "\n"
-            "A) Grund-Setup\n"
-            "1) Kamera anschliessen und im Vision-Tab starten.\n"
-            "2) Schachbrett vorbereiten: flach, bekanntes Quadratmass (mm), Board fixiert.\n"
-            "3) Pattern-Groesse (cols/rows) = Anzahl der INNEREN Ecken.\n"
-            "4) In Pick&Place -> Calibration sicherstellen, dass die Pattern-Parameter stimmen.\n"
+            "A) Basic setup\n"
+            "1) Connect the camera and start it in the Vision tab.\n"
+            "2) Prepare the chessboard: flat, known square size (mm), board fixed.\n"
+            "3) Pattern size (cols/rows) = number of INNER corners.\n"
+            "4) In Pick&Place -> Calibration, verify all pattern parameters.\n"
             "\n"
-            "B) Kamera-Intrinsics (einmal pro Kamera)\n"
-            "5) Calibration -> Camera oeffnen.\n"
-            "6) 10+ Samples aufnehmen: Board kippen/verschieben (unterschiedliche Posen).\n"
-            "7) Compute Intrinsics klicken.\n"
-            "8) Save to camera.json klicken.\n"
-            "9) Pipeline neu starten (Init Pipeline) oder App neu starten.\n"
+            "B) Camera intrinsics (once per camera)\n"
+            "5) Open Calibration -> Camera.\n"
+            "6) Capture 10+ samples with varied board poses.\n"
+            "7) Click Compute Intrinsics.\n"
+            "8) Click Save to camera.json.\n"
+            "9) Re-init pipeline (Init Pipeline) or restart app.\n"
             "\n"
             "C) base_T_board (Robot -> Board)\n"
-            "10) Calibration -> Base-Cam oeffnen.\n"
-            "11) Pattern cols/rows und Square size (mm) setzen.\n"
-            "12) TCP auf P0=(0,0) innere Ecke fahren, Capture P0.\n"
-            "13) TCP auf P1=(cols-1,0) innere Ecke fahren, Capture P1.\n"
-            "14) TCP auf P2=(0,rows-1) innere Ecke fahren, Capture P2.\n"
-            "15) Compute base_T_board, danach Save Board Config.\n"
-            "    Hinweis: P1 definiert +X, P2 definiert +Y. Reihenfolge muss zum Kamerabild passen.\n"
+            "10) Open Calibration -> Base-Cam.\n"
+            "11) Set pattern cols/rows and square size (mm).\n"
+            "12) Move TCP to P0=(0,0) inner corner, Capture P0.\n"
+            "13) Move TCP to P1=(cols-1,0) inner corner, Capture P1.\n"
+            "14) Move TCP to P2=(0,rows-1) inner corner, Capture P2.\n"
+            "15) Compute base_T_board, then Save Board Config.\n"
+            "    Note: P1 defines +X, P2 defines +Y. Order must match camera view.\n"
             "\n"
             "D) base_T_cam (Camera -> Base)\n"
-            "16) Vision-Tab: Board sichtbar und scharf.\n"
-            "17) Compute base_T_cam klicken.\n"
-            "18) Matrix pruefen und Save base_T_cam (configs/transforms.json) klicken.\n"
+            "16) In Vision tab, keep board visible and sharp.\n"
+            "17) Click Compute base_T_cam.\n"
+            "18) Run Validate base_T_cam (target: <=3 mm and <=1.5 deg).\n"
+            "19) Run Simulate calibration (Monte Carlo, keep p95 low).\n"
+            "20) Verify matrix and Save base_T_cam (configs/transforms.json).\n"
             "\n"
-            "E) marker_T_obj (Marker -> Objektzentrum)\n"
-            "19) Calibration -> Marker-Obj oeffnen.\n"
-            "20) Face axis und Sign entsprechend der Marker-Ausrichtung waehlen.\n"
-            "21) Compute marker_T_obj und Save marker_T_obj (configs/markers.json).\n"
+            "E) marker_T_obj (Marker -> Object center)\n"
+            "21) Open Calibration -> Marker-Obj.\n"
+            "22) Choose face axis and sign according to marker orientation.\n"
+            "23) Compute marker_T_obj and Save marker_T_obj (configs/markers.json).\n"
             "\n"
-            "F) Perception testen\n"
-            "22) Calibration -> Perception oeffnen.\n"
-            "23) Detect Once und Position/Quaternion/Confidence pruefen.\n"
+            "F) Perception test\n"
+            "24) Open Calibration -> Perception.\n"
+            "25) Run Detect Once and verify position/quaternion/confidence.\n"
             "\n"
             "Troubleshooting\n"
-            "- Kein Board: Licht, Fokus, Pattern cols/rows oder Square size pruefen.\n"
-            "- Grobe Fehler: Intrinsics neu kalibrieren.\n"
-            "- Verdrehte Pose: P0/P1/P2 Reihenfolge pruefen (muss Kamera-Order entsprechen).\n"
-            "- base_T_cam falsch: Board war nicht fix oder base_T_board ungenau.\n"
+            "- Board not found: check lighting, focus, pattern cols/rows, square size.\n"
+            "- Large errors: recalibrate intrinsics.\n"
+            "- Rotated pose: verify P0/P1/P2 order matches camera order.\n"
+            "- Wrong base_T_cam: board moved or base_T_board is inaccurate.\n"
             "\n"
-            "Skizze (Board-Kalibrierung, Weltkoordinaten)\n"
+            "Sketch (board calibration, world coordinates)\n"
             "P0 = (0,0)  P1 = (cols-1,0)  P2 = (0,rows-1)\n"
             "\n"
             "   +Y (rows)\n"
@@ -587,8 +619,8 @@ class PickPlaceTab(ttk.Frame):
             "   |      |           |\n"
             "   |   P0 o-----------o P1  -> +X (cols)\n"
             "   +------------------------------>\n"
-            "          Welt-XY-Ebene (Z nach oben)\n"
-            "          25 cm Abstand zur Seitenkante (X- Richtung)\n"
+            "          World XY plane (Z up)\n"
+            "          25 cm distance to side edge (X direction)\n"
         )
         help_text = tk.Text(tab, wrap="word")
         help_text.insert("1.0", text)
@@ -701,48 +733,17 @@ class PickPlaceTab(ttk.Frame):
                 square = float(self._square_size_var.get())
                 base_T_board = self._read_matrix_vars(self._base_T_board_vars)
                 cam_cfg = self._configs.get("camera", {})
-
-                image, color_order = self._get_calibration_image(cam_cfg)
-                if image is None:
-                    raise RuntimeError("No camera frame available")
+                camera_matrix, dist = self._camera_model_from_cfg(cam_cfg)
+                objp, corners2 = self._detect_board_points(cols, rows, square, cam_cfg)
 
                 import cv2
-                import numpy as np
-
-                if len(image.shape) == 3:
-                    if color_order == "rgb":
-                        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-                    else:
-                        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                else:
-                    gray = image
-                try:
-                    flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
-                    found, corners = cv2.findChessboardCornersSB(gray, (cols, rows), flags=flags)
-                except Exception:
-                    found, corners = cv2.findChessboardCorners(gray, (cols, rows), None)
-
-                if not found:
-                    raise RuntimeError("Chessboard not found")
-
-                criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-                corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
-
-                objp = np.zeros((rows * cols, 3), np.float32)
-                objp[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2)
-                objp *= square
-
-                intr = cam_cfg.get("intrinsics", {})
-                fx = float(intr.get("fx", 800.0))
-                fy = float(intr.get("fy", 800.0))
-                cx = float(intr.get("cx", gray.shape[1] / 2))
-                cy = float(intr.get("cy", gray.shape[0] / 2))
-                camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
-                dist = np.array(cam_cfg.get("distortion", [0, 0, 0, 0, 0]), dtype=np.float32)
-
                 ok, rvec, tvec = cv2.solvePnP(objp, corners2, camera_matrix, dist)
                 if not ok:
                     raise RuntimeError("solvePnP failed")
+
+                proj, _ = cv2.projectPoints(objp, rvec, tvec, camera_matrix, dist)
+                reproj = proj.reshape(-1, 2) - corners2.reshape(-1, 2)
+                reproj_rmse = float((reproj[:, 0] ** 2 + reproj[:, 1] ** 2).mean() ** 0.5)
 
                 R_cam, _ = cv2.Rodrigues(rvec)
                 cam_T_board = make_transform(R_cam.tolist(), tvec.reshape(-1).tolist())
@@ -750,10 +751,168 @@ class PickPlaceTab(ttk.Frame):
 
                 self._set_matrix_vars(self._base_T_cam_vars, base_T_cam)
                 self._set_status("base_T_cam computed")
-                self._log("base_T_cam computed from chessboard.")
+                self._log(f"base_T_cam computed from chessboard. reproj_rmse={reproj_rmse:.3f} px")
             except Exception as exc:
                 self._set_status("base_T_cam error")
                 self._log(f"Compute base_T_cam failed: {exc}")
+        self._start_worker(_task)
+
+    @staticmethod
+    def _rot_error_deg(R_a, R_b):
+        t = (
+            R_a[0][0] * R_b[0][0] + R_a[1][0] * R_b[1][0] + R_a[2][0] * R_b[2][0]
+            + R_a[0][1] * R_b[0][1] + R_a[1][1] * R_b[1][1] + R_a[2][1] * R_b[2][1]
+            + R_a[0][2] * R_b[0][2] + R_a[1][2] * R_b[1][2] + R_a[2][2] * R_b[2][2]
+        )
+        cos_theta = max(-1.0, min(1.0, (t - 1.0) * 0.5))
+        return math.degrees(math.acos(cos_theta))
+
+    def _camera_model_from_cfg(self, cam_cfg):
+        import numpy as np
+
+        intr = cam_cfg.get("intrinsics", {})
+        fx = float(intr.get("fx", 800.0))
+        fy = float(intr.get("fy", 800.0))
+        image_size = cam_cfg.get("image_size", [640, 480])
+        w = float(image_size[0]) if isinstance(image_size, list) and len(image_size) >= 2 else 640.0
+        h = float(image_size[1]) if isinstance(image_size, list) and len(image_size) >= 2 else 480.0
+        cx = float(intr.get("cx", w / 2.0))
+        cy = float(intr.get("cy", h / 2.0))
+        camera_matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
+        dist = np.array(cam_cfg.get("distortion", [0, 0, 0, 0, 0]), dtype=np.float32)
+        return camera_matrix, dist
+
+    def _detect_board_points(self, cols, rows, square, cam_cfg):
+        image, color_order = self._get_calibration_image(cam_cfg)
+        if image is None:
+            raise RuntimeError("No camera frame available")
+
+        import cv2
+        import numpy as np
+
+        if len(image.shape) == 3:
+            if color_order == "rgb":
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+        try:
+            flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
+            found, corners = cv2.findChessboardCornersSB(gray, (cols, rows), flags=flags)
+        except Exception:
+            found, corners = cv2.findChessboardCorners(gray, (cols, rows), None)
+        if not found:
+            raise RuntimeError("Chessboard not found")
+
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+        corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+
+        objp = np.zeros((rows * cols, 3), np.float32)
+        objp[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2)
+        objp *= float(square)
+        return objp, corners2
+
+    def _validate_base_T_cam_once(self):
+        def _task():
+            try:
+                self._ensure_configs()
+                cols = int(self._pattern_cols_var.get())
+                rows = int(self._pattern_rows_var.get())
+                square = float(self._square_size_var.get())
+                base_T_board_cfg = self._read_matrix_vars(self._base_T_board_vars)
+                base_T_cam_cfg = self._read_matrix_vars(self._base_T_cam_vars)
+                cam_cfg = self._configs.get("camera", {})
+                objp, corners2 = self._detect_board_points(cols, rows, square, cam_cfg)
+                camera_matrix, dist = self._camera_model_from_cfg(cam_cfg)
+
+                import cv2
+                ok, rvec, tvec = cv2.solvePnP(objp, corners2, camera_matrix, dist)
+                if not ok:
+                    raise RuntimeError("solvePnP failed")
+                R_cam, _ = cv2.Rodrigues(rvec)
+                cam_T_board_meas = make_transform(R_cam.tolist(), tvec.reshape(-1).tolist())
+                base_T_board_meas = matmul(base_T_cam_cfg, cam_T_board_meas)
+
+                t_cfg = extract_translation(base_T_board_cfg)
+                t_meas = extract_translation(base_T_board_meas)
+                pos_err = math.sqrt(sum((t_cfg[i] - t_meas[i]) ** 2 for i in range(3)))
+
+                R_cfg = [row[:3] for row in base_T_board_cfg[:3]]
+                R_meas = [row[:3] for row in base_T_board_meas[:3]]
+                ang_err = self._rot_error_deg(R_cfg, R_meas)
+                status = "OK" if pos_err <= 3.0 and ang_err <= 1.5 else "WARN"
+                self._log(
+                    f"base_T_cam validation ({status}): board_pos_err={pos_err:.2f} mm "
+                    f"board_rot_err={ang_err:.2f} deg"
+                )
+            except Exception as exc:
+                self._log(f"Validate base_T_cam failed: {exc}")
+
+        self._start_worker(_task)
+
+    def _simulate_base_cam_noise(self):
+        def _task():
+            try:
+                self._ensure_configs()
+                cols = int(self._pattern_cols_var.get())
+                rows = int(self._pattern_rows_var.get())
+                square = float(self._square_size_var.get())
+                base_T_board = self._read_matrix_vars(self._base_T_board_vars)
+                base_T_cam = self._read_matrix_vars(self._base_T_cam_vars)
+                cam_cfg = self._configs.get("camera", {})
+
+                import cv2
+                import numpy as np
+
+                camera_matrix, dist = self._camera_model_from_cfg(cam_cfg)
+                cam_T_board = matmul(invert_transform(base_T_cam), base_T_board)
+                R = np.array([row[:3] for row in cam_T_board[:3]], dtype=np.float32)
+                t = np.array(extract_translation(cam_T_board), dtype=np.float32).reshape(3, 1)
+                rvec, _ = cv2.Rodrigues(R)
+
+                objp = np.zeros((rows * cols, 3), np.float32)
+                objp[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2)
+                objp *= float(square)
+                ideal, _ = cv2.projectPoints(objp, rvec, t, camera_matrix, dist)
+                ideal = ideal.reshape(-1, 2)
+
+                rng = np.random.default_rng(6300)
+                sigma_px = 0.35
+                trials = 200
+                trans_err = []
+                rot_err = []
+                for _ in range(trials):
+                    noisy = ideal + rng.normal(0.0, sigma_px, ideal.shape)
+                    noisy = noisy.astype(np.float32).reshape(-1, 1, 2)
+                    ok, rvec_n, tvec_n = cv2.solvePnP(objp, noisy, camera_matrix, dist)
+                    if not ok:
+                        continue
+                    R_n, _ = cv2.Rodrigues(rvec_n)
+                    cam_T_board_n = make_transform(R_n.tolist(), tvec_n.reshape(-1).tolist())
+                    base_T_cam_n = matmul(base_T_board, invert_transform(cam_T_board_n))
+
+                    t_true = extract_translation(base_T_cam)
+                    t_est = extract_translation(base_T_cam_n)
+                    trans_err.append(math.sqrt(sum((t_true[i] - t_est[i]) ** 2 for i in range(3))))
+
+                    R_true = [row[:3] for row in base_T_cam[:3]]
+                    R_est = [row[:3] for row in base_T_cam_n[:3]]
+                    rot_err.append(self._rot_error_deg(R_true, R_est))
+
+                if not trans_err:
+                    raise RuntimeError("No valid Monte-Carlo trials.")
+
+                trans_arr = np.array(trans_err, dtype=float)
+                rot_arr = np.array(rot_err, dtype=float)
+                self._log(
+                    "Simulation base_T_cam (200x, noise=0.35 px): "
+                    f"t_err mean={trans_arr.mean():.2f} mm p95={np.percentile(trans_arr,95):.2f} mm, "
+                    f"R_err mean={rot_arr.mean():.2f} deg p95={np.percentile(rot_arr,95):.2f} deg"
+                )
+            except Exception as exc:
+                self._log(f"Simulate calibration failed: {exc}")
+
         self._start_worker(_task)
 
     def _save_base_T_cam(self):
@@ -1081,15 +1240,37 @@ class PickPlaceTab(ttk.Frame):
     def _set_status(self, text: str):
         self._ui(lambda: self._status_var.set(text))
 
+    def _refresh_stack_index(self):
+        idx = "n/a"
+        try:
+            if self._pipeline is not None:
+                idx = str(int(getattr(self._pipeline.context, "stack_index", 0)))
+        except Exception:
+            idx = "n/a"
+        self._ui(lambda: self._stack_index_var.set(f"Stack index: {idx}"))
+
+    def _reset_stack_index(self):
+        try:
+            self._ensure_pipeline()
+            self._pipeline.context.stack_index = 0
+            self._refresh_stack_index()
+            self._log("Stack index reset to 0.")
+        except Exception as exc:
+            self._log(f"Stack index reset failed: {exc}")
+
     def _init_pipeline(self):
         try:
             self._pipeline, self._configs = build_pipeline(self._base_dir)
             self._attach_camera_capture()
+            lr = self._ensure_learner()
+            lr.sync_baseline_from_configs(self._configs)
+            self._refresh_learning_from_manager()
             sim_cfg = self._configs.get("simulation", {})
             cycles = int(sim_cfg.get("cycles", 1000))
             self._sim_cycles.set(cycles)
             self._render_config()
             self._load_calibration_into_ui()
+            self._refresh_stack_index()
             self._set_status("Pipeline ready")
             self._log("Pipeline initialized.")
         except Exception as exc:
@@ -1113,6 +1294,108 @@ class PickPlaceTab(ttk.Frame):
         except Exception:
             pass
 
+    def _ensure_learner(self):
+        if self._learner is None:
+            self._learner = TntSelfLearningManager(self._base_dir, logger=self._log)
+        return self._learner
+
+    def _refresh_learning_from_manager(self):
+        lr = self._ensure_learner()
+        st = lr.get_status()
+        self._learning_enabled_var.set(bool(st.get("enabled", False)))
+        self._learning_mode_var.set(str(st.get("mode", "shadow")))
+        self._learning_status_var.set(
+            f"Learning: {st.get('mode', 'shadow')} "
+            f"eps={st.get('epsilon', 0.0):.3f} "
+            f"succ={st.get('successes', 0)}/{st.get('attempts', 0)}"
+        )
+
+    def _on_learning_toggle(self):
+        lr = self._ensure_learner()
+        lr.set_enabled(bool(self._learning_enabled_var.get()))
+        lr.save_settings()
+        self._refresh_learning_from_manager()
+        self._log(f"Learning enabled set to {bool(self._learning_enabled_var.get())}.")
+
+    def _on_learning_mode_change(self):
+        lr = self._ensure_learner()
+        lr.set_mode(self._learning_mode_var.get())
+        lr.save_settings()
+        self._refresh_learning_from_manager()
+        self._log(f"Learning mode set to {self._learning_mode_var.get()}.")
+
+    def _show_learning_status(self):
+        lr = self._ensure_learner()
+        st = lr.get_status()
+        self._log(
+            "Learning status: "
+            f"mode={st['mode']} enabled={st['enabled']} epsilon={st['epsilon']:.3f} "
+            f"success_rate={st['success_rate']:.2%} attempts={st['attempts']} "
+            f"failure_streak={st.get('failure_streak', 0)} last_reward={st.get('last_reward', 0.0):+.2f} "
+            f"context={st.get('active_context', 'global')}"
+        )
+
+    def _reset_learning_policy(self):
+        try:
+            self._ensure_configs()
+            lr = self._ensure_learner()
+            lr.reset_policy_from_configs(self._configs)
+            self._refresh_learning_from_manager()
+            self._log("Learning policy reset from current config.")
+        except Exception as exc:
+            self._log(f"Learning reset failed: {exc}")
+
+    def _learning_before_cycle(self, simulated: bool):
+        if self._configs is None:
+            return
+        lr = self._ensure_learner()
+        info = lr.before_cycle(self._configs, simulated=simulated, context_hint=self._last_cycle_ctx)
+        self._learning_event_count += 1
+        should_log = (not simulated) or (self._learning_event_count % 50 == 0)
+        if info.get("applied"):
+            if should_log:
+                self._log(
+                f"Learning candidate applied (mode={info.get('mode')}, explore={info.get('explore')})."
+                )
+        elif info.get("enabled"):
+            if should_log:
+                self._log(
+                f"Learning candidate evaluated in shadow mode (explore={info.get('explore')})."
+                )
+
+    def _make_cycle_context(self, duration_s: float, err):
+        ctx = {"duration_s": float(duration_s)}
+        try:
+            obj_pose = getattr(self._pipeline.context, "object_pose", None)
+            if obj_pose is not None and hasattr(obj_pose, "confidence"):
+                ctx["confidence"] = float(obj_pose.confidence)
+        except Exception:
+            pass
+        if err is not None:
+            ctx["error_type"] = type(err).__name__
+        return ctx
+
+    def _learning_after_cycle(self, success: bool, err, cycle_ctx=None):
+        lr = self._ensure_learner()
+        msg = "" if err is None else str(err)
+        ctx = cycle_ctx or {}
+        out = lr.after_cycle(bool(success), msg, cycle_ctx=ctx)
+        self._last_cycle_ctx = dict(ctx)
+        if out.get("updated"):
+            st = lr.get_status()
+            suffix = ""
+            if out.get("rolled_back"):
+                suffix += " rollback"
+            if out.get("mode_changed"):
+                suffix += f" mode={st.get('mode')}"
+            self._learning_status_var.set(
+                f"Learning: {st.get('mode')} "
+                f"eps={out.get('epsilon', 0.0):.3f} "
+                f"reward={out.get('reward', 0.0):+.2f}"
+                f" fs={st.get('failure_streak', 0)}"
+                f" ctx={st.get('active_context', 'global')}{suffix}"
+            )
+
     def _start_worker(self, target):
         if self._worker and self._worker.is_alive():
             self._log("Worker already running.")
@@ -1125,12 +1408,17 @@ class PickPlaceTab(ttk.Frame):
         def _task():
             try:
                 self._ensure_pipeline()
+                self._learning_before_cycle(simulated=False)
+                t0 = time.time()
                 ok = self._pipeline.run_cycle()
+                dt = time.time() - t0
+                err = self._pipeline.state_machine.last_error
+                self._learning_after_cycle(ok, err, cycle_ctx=self._make_cycle_context(dt, err))
+                self._refresh_stack_index()
                 if ok:
                     self._set_status("Cycle ok")
                     self._log("Cycle success.")
                 else:
-                    err = self._pipeline.state_machine.last_error
                     self._set_status("Cycle failed")
                     self._log(f"Cycle failed: {err}")
             except Exception as exc:
@@ -1148,9 +1436,14 @@ class PickPlaceTab(ttk.Frame):
                     if self._stop_event.is_set():
                         self._log("Run stopped by user.")
                         break
+                    self._learning_before_cycle(simulated=False)
+                    t0 = time.time()
                     ok = self._pipeline.run_cycle()
+                    dt = time.time() - t0
+                    err = self._pipeline.state_machine.last_error
+                    self._learning_after_cycle(ok, err, cycle_ctx=self._make_cycle_context(dt, err))
+                    self._refresh_stack_index()
                     if not ok:
-                        err = self._pipeline.state_machine.last_error
                         self._set_status("Cycle failed")
                         self._log(f"Cycle {i + 1} failed: {err}")
                         break
@@ -1168,7 +1461,14 @@ class PickPlaceTab(ttk.Frame):
                 self._ensure_pipeline()
                 cycles = max(1, int(self._sim_cycles.get()))
                 runner = SimulationRunner(self._pipeline, self._configs.get("perception", {}))
-                successes = runner.run(cycles)
+                def _before(_i):
+                    self._learning_before_cycle(simulated=True)
+
+                def _cb(_i, ok, err, meta):
+                    self._learning_after_cycle(ok, err, cycle_ctx=meta or {})
+
+                successes = runner.run(cycles, per_cycle=_cb, before_cycle=_before)
+                self._refresh_stack_index()
                 self._set_status(f"Simulation {successes}/{cycles}")
                 self._log(f"Simulation complete: {successes}/{cycles} successes.")
             except Exception as exc:

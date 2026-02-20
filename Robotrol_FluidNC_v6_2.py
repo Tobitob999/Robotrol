@@ -1,34 +1,34 @@
 # ============================================================================================
-# 🦾 Robotrol V6.2
-# Vollständige G-Code-Steuerzentrale mit Queue, Gamepad, Kinematik, Vision & OTA
+# 34 Robotrol V6.3
+# Full G-code control center with queue, gamepad, kinematics, vision, and OTA
 # ============================================================================================
-# Kompatibel mit:
-#   • FluidNC v3.7–3.9 (ESP32)
-#   • GRBL 1.1 / 1.2 (über Serial)
+# Compatible with:
+#    FluidNC v3.73.9 (ESP32)
+#    GRBL 1.1 / 1.2 (via serial)
 #
 # Features:
-#   • Echtzeit-Steuerung über FluidNC-/GRBL-Serial-Link
-#   • Command Line + Live Queue (Pufferverwaltung, Prioritäten, Safe-Mischen)
-#   • Gamepad-Steuerung mit 3 Geschwindigkeitsprofilen (Slow / Mid / Fast)
-#   • DH6-Kinematik (FK/IK) + DLS-Inverse-Kinematik
-#   • Live-TCP-Pose-Anzeige (Roll / Pitch / Yaw) per DH-FK
-#   • Externer 3D-Visualizer (UDP Mirror → Port 9999)
-#   • Vision-System:
-#         - OpenCV Kameramodul
-#         - Schachbrett-Erkennung
-#         - BoardPose-Schätzung
-#   • OTA / HTTP Config-Tool für FluidNC
-#   • Dark-/Light-Theme umschaltbar
+#    Real-time control via FluidNC/GRBL serial link
+#    Command line + live queue (buffer handling, priorities, safe mixing)
+#    Gamepad control with 3 speed profiles (Slow / Mid / Fast)
+#    DH6-Kinematik (FK/IK) + DLS-Inverse-Kinematik
+#    Live-TCP-Pose-Anzeige (Roll / Pitch / Yaw) per DH-FK
+#    Externer 3D-Visualizer (UDP Mirror  Port 9999)
+#    Vision-System:
+#         - OpenCV camera module
+#         - Chessboard detection
+#         - Board pose estimation
+#    OTA / HTTP config tool for FluidNC
+#    Dark-/Light-Theme umschaltbar
 #
 # Enthaltene Module / Dateien:
-#   - tcp_world_kinematics_frame.py  ? DLS-IK + Welt-Koordinatensteuerung
-#   - tcp_pose_module_v3.py          ? FK6 (DH-Modell), Roll/Pitch/Yaw, mm-Ausgabe
-#   - tcp_world_kinematics_frame.py  ? TCP-Sequenzen (RET / TARGET / RET + Gripper)
-#   - gamepad_block_v3.py            ? Gamepad-Tabs & Trigger-Integration
-#   - robosim_visualizer_v90.py/exe  ? 3D-Visualizer (UDP 127.0.0.1:9999)
-#   - camera_capturev_v1_1.py         ? Live-Kamera / OpenCV
-#   - board_pose_v1.py               ? Schachbrett-Erkennung & Pose-Solve
-#   - fluidnc_updater_v2.py          ? OTA-Updater, $$-Inspector, Config-Manager
+#   - tcp_world_kinematics_frame.py  (TM) DLS IK + world-coordinate control
+#   - tcp_pose_module_v3.py          (TM) FK6 (DH model), Roll/Pitch/Yaw, mm output
+#   - tcp_world_kinematics_frame.py  (TM) TCP sequences (RET / TARGET / RET + gripper)
+#   - gamepad_block_v3.py            (TM) Gamepad-Tabs & Trigger-Integration
+#   - robosim_visualizer_v90.py/exe  (TM) 3D-Visualizer (UDP 127.0.0.1:9999)
+#   - camera_capturev_v1_1.py         (TM) Live camera / OpenCV
+#   - board_pose_v1.py               (TM) Chessboard detection & pose solve
+#   - fluidnc_updater_v2.py          (TM) OTA-Updater, $$-Inspector, Config-Manager
 
 
 
@@ -66,13 +66,13 @@ messagebox.showwarning = _no_popup
 messagebox.showerror = _no_popup
 
 # =========================
-# Konfiguration
+# Configuration
 # =========================
 UDP_MIRROR = True
 UDP_ADDR = ("127.0.0.1", 9999)
 GC_RE = re.compile(r"\[GC:(.+)\]")
 AXES = ["X", "Y", "Z", "A", "B", "C"]
-AXIS_LIMITS_DEFAULT = {ax: (-180.0, 180.0) for ax in AXES}  # Fallback ±180°
+AXIS_LIMITS_DEFAULT = {ax: (-180.0, 180.0) for ax in AXES}  # Fallback 180
 DEFAULT_ENDSTOP_LIMITS = {
     "X": (-100.0, 100.0),
     "Y": (-100.0, 100.0),
@@ -81,11 +81,11 @@ DEFAULT_ENDSTOP_LIMITS = {
     "B": (-180.0, 180.0),
     "C": (-180.0, 180.0),
 }
-MAX_FEED = 15000.0                     # mm/min (interpretiert als „Grad/min“)
-MAX_HOME_FEED = 5000   # Beispielwert, frei änderbar
-DEFAULT_TIMEOUT = 30.0                # s pro Befehl
-MOTION_EPS = 0.01                     # min. Positionsänderung für Live-Move
-# $$ Softlimits (Travel) – Grbl/FluidNC: $130..$134 → X..B max travel
+MAX_FEED = 15000.0                     # mm/min (interpretiert als Grad/min)
+MAX_HOME_FEED = 5000   # example value, freely adjustable
+DEFAULT_TIMEOUT = 30.0                # seconds per command
+MOTION_EPS = 0.01                     # min. position change for live move
+# $$ Softlimits (Travel)  Grbl/FluidNC: $130..$134  X..B max travel
 SOFTMAX_RE = {
     "X": re.compile(r"^\$130=([0-9\.]+)"),
     "Y": re.compile(r"^\$131=([0-9\.]+)"),
@@ -96,6 +96,48 @@ SOFTMAX_RE = {
 }
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_FLAGS_PATH = os.path.join(BASE_DIR, "configs", "project_flags.json")
+CAMERA_CONFIG_PATH = os.path.join(BASE_DIR, "configs", "camera.json")
+
+
+def _load_project_flags():
+    default = {
+        "language": "en",
+        "enforce_english_text": True,
+        "language_migration_policy": "low_priority_incremental",
+    }
+    try:
+        with open(PROJECT_FLAGS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            out = dict(default)
+            out.update(data)
+            return out
+    except Exception:
+        pass
+    return default
+
+
+PROJECT_FLAGS = _load_project_flags()
+
+
+def _load_camera_config():
+    default = {
+        "device_index": 0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+    }
+    try:
+        with open(CAMERA_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            out = dict(default)
+            out.update(data)
+            return out
+    except Exception:
+        pass
+    return default
 DEFAULT_PROFILE = config_profiles.DEFAULT_PROFILE
 ACTIVE_PROFILE = {
     "name": DEFAULT_PROFILE,
@@ -106,8 +148,24 @@ if isinstance(ACTIVE_PROFILE["data"], dict):
     if dh_model:
         tcp_pose_module.set_dh_model_from_dict(dh_model)
 
+NO_ENDSTOP_PROFILES = {"eb15_red", "eb300"}
+
+
+def _profile_has_endstops(profile_name, profile_data):
+    if isinstance(profile_data, dict):
+        features = profile_data.get("features")
+        if isinstance(features, dict) and "has_endstops" in features:
+            try:
+                return bool(features.get("has_endstops"))
+            except Exception:
+                pass
+    norm = (profile_name or "").strip().lower()
+    if norm in NO_ENDSTOP_PROFILES:
+        return False
+    return True
+
 def map_speed(val_0_1000: int) -> int:
-    """Linear: 0–1000 → 0–MAX_FEED."""
+    """Linear: 01000  0MAX_FEED."""
     val = max(0, min(1000, int(val_0_1000)))
     return int((val / 1000.0) * MAX_FEED)
 
@@ -117,8 +175,8 @@ def map_speed(val_0_1000: int) -> int:
 # =========================
 class SerialClient:
     """
-    Einfache Abstraktion über die serielle Verbindung + UDP-Mirror.
-    Unterstützt Backends:
+    Simple abstraction over serial connection + UDP mirror.
+    Supports backends:
       - fluidnc
       - grbl
       - custom
@@ -134,9 +192,9 @@ class SerialClient:
         },
         "grbl": {
             "name": "GRBL",
-            "supports_endstops": False,     # kein Pn:
+            "supports_endstops": False,     # no Pn:
             "supports_ota": False,
-            "supports_axis_homing": False,  # nur $H
+            "supports_axis_homing": False,  # only $H
             "supports_softlimits": True,
         },
         "custom": {
@@ -148,15 +206,15 @@ class SerialClient:
         },
     }
 
-    DEBUG_SERIAL = True  # bei Bedarf auf False setzen, um Konsole zu entlasten
+    DEBUG_SERIAL = True  # set to False if needed to reduce console noise
 
     def __init__(self):
         self.ser = None
 
-        # Keine GUI-Referenzen hier!
+        # No GUI references here!
         self.rx_thread = None
         self.rx_running = False
-        self.listeners = []       # Muss existieren für TCP Panel
+        self.listeners = []       # Must exist for TCP panel
         self.lock = threading.Lock()
 
         # UDP Mirror
@@ -174,7 +232,7 @@ class SerialClient:
         self.last_status = None
 
     # ------------------------------------------------------------
-    # 🔀 Backend auswählen (FluidNC / GRBL / Custom)
+    #  Select backend (FluidNC / GRBL / custom)
     # ------------------------------------------------------------
     def set_backend(self, backend_name: str):
         name = (backend_name or "").strip().lower()
@@ -214,14 +272,14 @@ class SerialClient:
         return self.backend_caps.get("supports_softlimits", False)
 
     # ------------------------------------------------------------
-    # 📡 Zentrale Status-Parsing-Funktion (für TCP-Panel & Co.)
+    #  Central status parsing function (for TCP panel, etc.)
     # ------------------------------------------------------------
     def parse_status_line(self, line: str):
         """
-        Parsed eine typische Statuszeile:
+        Parse a typical status line:
           <Idle|MPos:...|WPos:...|FS:...|Pn:...>
-        und liefert (state, positions_dict).
-        positions_dict nutzt MPos wenn vorhanden, sonst WPos.
+        and return (state, positions_dict).
+        positions_dict uses MPos if available, otherwise WPos.
         """
         state = None
         positions = {}
@@ -260,13 +318,13 @@ class SerialClient:
         for ax, val in pose_src.items():
             positions[ax] = val
 
-        # für andere Teile merken
+        # store for other parts
         self.last_status = {"state": state, "MPos": mpos, "WPos": wpos}
         return state, positions
 
 
     # ------------------------------------------------------------
-    # 🔌 COM-Port-Management
+    #  COM-Port-Management
     # ------------------------------------------------------------
     def connect(self, port, baud=115200):
         try:
@@ -277,8 +335,8 @@ class SerialClient:
                     pass
 
             # --------------------------
-            # 🔥 EXPERTE: ARDUINO MEGA
-            # Kein DTR/RTS, kein Reset
+            #  EXPERTE: ARDUINO MEGA
+            # No DTR/RTS, no reset
             # --------------------------
             self.ser = serial.Serial(
                 port,
@@ -288,36 +346,36 @@ class SerialClient:
                 rtscts=False,
                 dsrdtr=False,
                 xonxoff=False,
-                # Mega-spezifisch: DTR und RTS NICHT anfassen!
+                # Mega-specific: do NOT touch DTR and RTS!
             )
 
             time.sleep(0.2)
 
-            # 🔄 Buffer leeren
+            #  Buffer leeren
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
 
-            # 💡 Einmal \r\n schicken (Mega wird dadurch wach)
+            #  Send one \r\n once (wakes up Mega)
             with self.lock:
                 self.ser.write(b"\r\n")
 
             time.sleep(0.1)
 
-            # RX-Thread starten
+            # Start RX thread
             self.rx_running = True
             self.rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
             self.rx_thread.start()
 
             if self.DEBUG_SERIAL:
-                print(f"[OK] Verbunden mit {port} @ {baud} (Mega/GRBL)")
+                print(f"[OK] Connected to {port} @ {baud} (Mega/GRBL)")
 
-            # 💡 Jetzt die erste echte Anfrage
+            #  Jetzt die erste echte Anfrage
             self.send_line("$$")
-            self.send_line("?")
+            self.send_line("(TM)")
 
         except Exception as e:
             self.ser = None
-            print(f"[Fehler] Verbindung fehlgeschlagen: {e}")
+            print(f"[Error] Connection failed: {e}")
             raise
 
 
@@ -326,7 +384,7 @@ class SerialClient:
 
 
     def disconnect(self):
-        """Sauberes Schließen der seriellen Verbindung."""
+        """Cleanly close the serial connection."""
         try:
             self.rx_running = False
             if self.ser:
@@ -335,17 +393,17 @@ class SerialClient:
                 self.ser.close()
             self.ser = None
         except Exception as e:
-            print("[Fehler disconnect()]", e)
+            print("[Error disconnect()]", e)
 
     # ------------------------------------------------------------
-    # 🔍 COM-Port Liste abrufen
+    #  COM-Port Liste abrufen
     # ------------------------------------------------------------
     def list_ports(self):
-        """Liste aller verfügbaren COM-Ports zurückgeben."""
+        """Return all available COM ports."""
         return [p.device for p in serial.tools.list_ports.comports()]
 
     # ------------------------------------------------------------
-    # 🌐 UDP Mirror (Visualizer / Status Broadcast)
+    #  UDP Mirror (Visualizer / Status Broadcast)
     # ------------------------------------------------------------
     def _mirror_udp(self, line: str):
         if not self.udp_sock:
@@ -371,13 +429,13 @@ class SerialClient:
                 print("[UDP Mirror error]", e)
 
     # ------------------------------------------------------------
-    # ✉️ Senden von Befehlen
+    #   Command sending
     # ------------------------------------------------------------
     def send_line(self, line: str):
-        """Sendet eine Zeile an den seriellen Port (oder spiegelt über UDP)."""
+        """Send one line to serial (and optionally mirror via UDP)."""
         if not self.ser:
             if not self._warned_not_connected:
-                print("[Warn] Not connected (send_line ignoriert)")
+                print("[Warn] Not connected (send_line ignored)")
                 self._warned_not_connected = True
             return
         self._warned_not_connected = False
@@ -387,19 +445,19 @@ class SerialClient:
             data = (text + "\n").encode("utf-8")
             with self.lock:
                 self.ser.write(data)
-            # DEBUG nur, wenn es NICHT die Statusabfrage ist
-            if self.DEBUG_SERIAL and text != "?":
+            # DEBUG only if this is NOT the status query
+            if self.DEBUG_SERIAL and text != "(TM)":
                 print("TX>", text)
             if self.udp_sock:
                 self._mirror_udp(text)
         except Exception as e:
-            print(f"[Warn] Sendefehler: {e}")
+            print(f"[Warn] Send error: {e}")
 
     def send_ctrl_x(self):
-        """Sendet Ctrl+X (Soft Reset), ohne Log-Spam bei fehlender Verbindung."""
+        """Send Ctrl+X (soft reset), without log spam when disconnected."""
         if not self.ser:
             if not self._warned_not_connected:
-                print("[Warn] Not connected (Ctrl+X ignoriert)")
+                print("[Warn] Not connected (Ctrl+X ignored)")
                 self._warned_not_connected = True
             return
         self._warned_not_connected = False
@@ -409,13 +467,13 @@ class SerialClient:
             if self.DEBUG_SERIAL:
                 print("TX> <Ctrl+X>")
         except Exception as e:
-            print(f"[Warn] send_ctrl_x fehlgeschlagen: {e}")
+            print(f"[Warn] send_ctrl_x failed: {e}")
 
     def _rx_loop(self):
-        """Liest permanent Daten aus der seriellen Schnittstelle und verteilt sie an Listener."""
+        """Continuously read serial data and dispatch to listeners."""
         buf = b""
         if self.DEBUG_SERIAL:
-            print("[RX] Thread gestartet")
+            print("[RX] Thread started")
 
         while self.rx_running and self.ser:
             try:
@@ -447,24 +505,24 @@ class SerialClient:
 
             except Exception as e:
                 if self.DEBUG_SERIAL:
-                    print("[RX-Loop Fehler]", e)
+                    print("[RX-loop error]", e)
                 time.sleep(0.1)
 
         if self.DEBUG_SERIAL:
-            print("[RX] Thread beendet")
+            print("[RX] Thread ended")
 
 # =========================
 # GUI Rahmen
 # =========================
 root = tk.Tk()
-root.title("Robotrol V6.2")
+root.title("Robotrol V6.3")
 root.geometry("1150x1000")
 
 style = ttk.Style()
 try:
     style.theme_use("clam")
 
-    # === ☀️ Standard: Light Mode aktiv ===
+    # ===    Standard: Light Mode aktiv ===
     light_bg = "#f0f0f0"
     light_fg = "black"
 
@@ -493,8 +551,8 @@ except Exception as e:
 
 except Exception as e:
     print("[Warn]", e)
-# === 🌗 Umschaltung Dark/Light Mode ===
-current_theme = {"dark": False}  # Zustand merken (mutable für closure)
+# ===  Umschaltung Dark/Light Mode ===
+current_theme = {"dark": False}  # keep state (mutable for closure)
 
 def toggle_theme():
     if current_theme["dark"]:
@@ -571,7 +629,7 @@ def refresh_ports():
 def connect():
     port = combo_ports.get().strip()
     if not port:
-        print("[WARN] Kein Port ausgewählt")
+        print("[WARN] No port selected")
         return
 
     baud = int(combo_baud.get())
@@ -585,16 +643,16 @@ def connect():
 
     try:
         client.connect(port, baud)
-        conn_lbl.configure(text="● Connected", foreground="#2e7d32")
-        print(f"[INFO] Verbunden mit {port} @ {baud} Backend={client.backend_type}")
+        conn_lbl.configure(text="Connected", foreground="#2e7d32")
+        print(f"[INFO] Connected to {port} @ {baud} Backend={client.backend_type}")
     except Exception as e:
-        conn_lbl.configure(text="● Disconnected", foreground="#b71c1c")
+        conn_lbl.configure(text="Disconnected", foreground="#b71c1c")
         print("[ERROR] Connect:", e)
 
 def disconnect():
     try:
         client.disconnect()
-        conn_lbl.configure(text="● Disconnected", foreground="#b71c1c")
+        conn_lbl.configure(text="Disconnected", foreground="#b71c1c")
         print("[INFO] Disconnected")
     except Exception as e:
         print("[ERROR] Disconnect:", e)
@@ -646,10 +704,10 @@ combo_backend.set("FluidNC")
 combo_backend.pack(side=tk.LEFT, padx=(0, 10))
 
 # --- Buttons ---
-ttk.Button(top, text="🔄", width=3, command=refresh_ports).pack(side=tk.LEFT, padx=2)
-ttk.Button(top, text="🔌 Connect", command=connect).pack(side=tk.LEFT, padx=2)
-ttk.Button(top, text="❌ Disconnect", command=disconnect).pack(side=tk.LEFT, padx=2)
-ttk.Button(top, text="🌗 Theme", width=12, command=toggle_theme).pack(side=tk.LEFT, padx=4)
+ttk.Button(top, text="Refresh", width=8, command=refresh_ports).pack(side=tk.LEFT, padx=2)
+ttk.Button(top, text="Connect", command=connect).pack(side=tk.LEFT, padx=2)
+ttk.Button(top, text="Disconnect", command=disconnect).pack(side=tk.LEFT, padx=2)
+ttk.Button(top, text="Theme", width=12, command=toggle_theme).pack(side=tk.LEFT, padx=4)
 ttk.Label(top, text="Config:").pack(side=tk.LEFT, padx=(4, 2))
 combo_profile = ttk.Combobox(
     top,
@@ -662,10 +720,10 @@ combo_profile.pack(side=tk.LEFT, padx=(0, 6))
 combo_profile.bind("<<ComboboxSelected>>", _on_profile_select)
 
 # --- Statusanzeige ---
-conn_lbl = ttk.Label(top, text="● Disconnected",
+conn_lbl = ttk.Label(top, text="Disconnected",
                      foreground="#b71c1c", width=14, anchor="e")
 conn_lbl.pack(side=tk.RIGHT, padx=8)
-# --- Ersten Port-Scan ausführen ---
+# --- Run initial port scan ---
 refresh_ports()
 # Execute App
 class ExecuteApp(ttk.Frame):
@@ -680,7 +738,7 @@ class ExecuteApp(ttk.Frame):
         self.paused = False
         self.repeat = tk.BooleanVar(value=False)
         self.repeat_count = tk.IntVar(value=0)
-        self.repeat_times = tk.IntVar(value=1)   # Anzahl gewünschter Wiederholungen
+        self.repeat_times = tk.IntVar(value=1)   # desired repeat count
         # State
         self.axis_positions = {ax: 0.0 for ax in AXES}
         self._user_editing = {ax: False for ax in AXES}
@@ -690,10 +748,11 @@ class ExecuteApp(ttk.Frame):
         self.speed_val = tk.IntVar(value=500)
         self.accel_val = tk.IntVar(value=500)
         self.vision_right_enabled = tk.BooleanVar(value=False)
-        self.hw_limits = {}  # aus $$ ermittelte Softmax (0..max), je Achse
+        self.hw_limits = {}  # soft max (0..max) per axis from $$
         self._vis_skip_kin = False
         self.profile_name = profile_name
         self.profile_data = profile_data if isinstance(profile_data, dict) else {"name": profile_name, "version": 1}
+        self.profile_has_endstops = _profile_has_endstops(self.profile_name, self.profile_data)
         self.profile_path = config_profiles.profile_path(profile_name, base_dir=BASE_DIR)
         self.gamepad_config_ui = None
         self.axis_limits = self._load_endstop_limits()
@@ -706,6 +765,8 @@ class ExecuteApp(ttk.Frame):
         self._awaiting_ack = False
 
         self._build_ui()
+        self._apply_profile_runtime_flags(log_note=False)
+        self._send_vis_robot_profile()
 
         # Worker-Thread
         self.worker_thread = threading.Thread(target=self.worker, daemon=True)
@@ -717,22 +778,22 @@ class ExecuteApp(ttk.Frame):
     # ---------- UI ----------
     def _build_ui(self):
         outer = ttk.Frame(self); outer.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-        self.axis_entry_order = []   # Reihenfolge für TAB
+        self.axis_entry_order = []   # tab order
 
         # Positions + Speed/Accel
         wrap = ttk.Frame(outer)
         wrap.pack(fill=tk.BOTH, expand=True, pady=8)
 
-        # 📁 Tabs für Achsensteuerung
+        #  Tabs for axis control
         pos_tabs = ttk.Notebook(wrap, width=900)
         pos_tabs.pack(side=tk.LEFT, fill=tk.Y, expand=False, padx=(0, 2))
 
         # --- Tab 1: Manuelle Achssteuerung (bisheriger posf-Inhalt)
         tab_manual = ttk.Frame(pos_tabs)
-        pos_tabs.add(tab_manual, text="🕹 Manual")
+        pos_tabs.add(tab_manual, text="Manual")
 
         # ============================================================
-        # 🧠 Vision – Kamera + Schachbrett-Erkennung
+        #   Vision - camera + chessboard detection
         # ============================================================
         tab_endstops = ttk.Frame(pos_tabs)
         pos_tabs.add(tab_endstops, text="Endstops")
@@ -828,24 +889,39 @@ class ExecuteApp(ttk.Frame):
         ).pack(side=tk.LEFT, padx=4)
 
         tab_vision = ttk.Frame(pos_tabs)
-        pos_tabs.add(tab_vision, text="🧠 Vision")
+        pos_tabs.add(tab_vision, text="Vision")
 
-        # Gemeinsamer Wrapper für saubere Ausrichtung
+        # Shared wrapper for clean alignment
         vision_wrap = ttk.Frame(tab_vision)
         vision_wrap.pack(padx=6, pady=6)
 
-        # Kamera und Pose-Fenster gleich groß
-        self.cam = CameraCapture(vision_wrap, width=420, height=320)
-        self.board_detector = BoardPose(vision_wrap, self.cam, pattern_size=(7, 7))
+        # Camera and pose windows with equal size
+        cam_cfg = _load_camera_config()
+        self.cam = CameraCapture(
+            vision_wrap,
+            camera_index=int(cam_cfg.get("device_index", 0)),
+            width=int(cam_cfg.get("width", 1920)),
+            height=int(cam_cfg.get("height", 1080)),
+            fps=int(cam_cfg.get("fps", 30)),
+            preview_width=420,
+            preview_height=320,
+        )
+        self.board_detector = BoardPose(
+            vision_wrap,
+            self.cam,
+            pattern_size=(7, 7),
+            preview_width=420,
+            preview_height=320,
+        )
 
-        # Nebeneinander mit oberer Kante bündig
+        # Side by side with top-edge alignment
         self.cam.get_frame().pack(side="left", padx=8, pady=6, anchor="n")
         self.board_detector.get_frame().pack(side="left", padx=8, pady=6, anchor="n")
 
-        # --- Startknopf, der nach Start verschwindet ---
+        # --- Start button that disappears after launch ---
         btn_row = ttk.Frame(tab_vision)
         btn_row.pack(pady=4)
-        btn_start = ttk.Button(btn_row, text="▶ Kamera starten")
+        btn_start = ttk.Button(btn_row, text="Start Camera")
         btn_start.pack(side=tk.LEFT, padx=4)
         chk_right = ttk.Checkbutton(
             btn_row,
@@ -872,14 +948,14 @@ class ExecuteApp(ttk.Frame):
         except Exception as e:
             ttk.Label(tab_chess, text=f"Chess vision init failed: {e}").pack(anchor="w", padx=6, pady=6)
 
-        # ⚙️ Tab: FluidNC Config / OTA / $$ Inspector
+        # TM  Tab: FluidNC Config / OTA / $$ Inspector
         tab_updater = ttk.Frame(pos_tabs)
-        pos_tabs.add(tab_updater, text="⚙️ Config / OTA")
+        pos_tabs.add(tab_updater, text="Config / OTA")
 
         # FluidNCUpdaterFrame einbinden
         self.updater_frame = FluidNCUpdaterFrame(tab_updater, default_ip="192.168.25.149")
 
-        # Wenn das aktuelle Backend kein OTA kann (z.B. GRBL), ganze Sektion deaktivieren
+        # If current backend does not support OTA (e.g., GRBL), disable whole section
         if not self.client.supports_ota:
             for child in tab_updater.winfo_children():
                 try:
@@ -889,33 +965,33 @@ class ExecuteApp(ttk.Frame):
 
 
 
-        # --- Höhe des OTA-Tabs begrenzen ---
+        # --- Limit OTA tab height ---
         tab_updater.update_idletasks()
         tab_updater.configure(height=400)
         tab_updater.pack_propagate(False)
         
-        # 🎮 Tab: Gamepad (nun unten in pos_tabs)
+        #  Tab: Gamepad (nun unten in pos_tabs)
         tab_gamepad = ttk.Frame(pos_tabs)
-        pos_tabs.add(tab_gamepad, text="🎮 Gamepad")
+        pos_tabs.add(tab_gamepad, text="Gamepad")
 
         # Gamepad-Integration
         from gamepad_block_v3 import attach_gamepad_tab
         self.stop_gamepad = attach_gamepad_tab(tab_gamepad, self.client, self)
 
-        # 🤖 Tab: Kinematics (DH6 / Weltkoordinaten)
+        #  Tab: Kinematics (DH6 / Weltkoordinaten)
         tab_kin = ttk.Frame(pos_tabs)
-        # direkt rechts neben dem Gamepad-Tab einfügen
-        pos_tabs.add(tab_kin, text="🤖 Kinematics")
+        # insert directly to the right of the gamepad tab
+        pos_tabs.add(tab_kin, text="Kinematics")
 
         try:
             self.kinematics_tabs = TcpWorldKinematicsTabs(
                 tab_kin,        # Parent
-                self,           # ExecuteApp → für Axis-Access / G-Code
+                self,           # ExecuteApp -> for axis access / G-code
                 self.client     # SerialClient
             )
             self.kinematics_tabs.pack(fill="both", expand=True)
         except TypeError:
-            # Alternative Reihenfolge falls Modul anders definiert ist
+            # Alternate order if module is defined differently
             self.kinematics_tabs = TcpWorldKinematicsTabs(
                 tab_kin,
                 self.client,
@@ -924,9 +1000,9 @@ class ExecuteApp(ttk.Frame):
             self.kinematics_tabs.pack(fill="both", expand=True)
         self.kinematics_tabs.pack(fill=tk.BOTH, expand=True)
 
-        # 🧭 Tab: Fixed TCP Orientation
+        #  Tab: Fixed TCP Orientation
         tab_fixed_tcp = ttk.Frame(pos_tabs)
-        pos_tabs.add(tab_fixed_tcp, text="🧭 Fixed TCP")
+        pos_tabs.add(tab_fixed_tcp, text="Fixed TCP")
 
         tab_pickplace = ttk.Frame(pos_tabs)
         pos_tabs.add(tab_pickplace, text="Pick&Place")
@@ -1142,7 +1218,7 @@ class ExecuteApp(ttk.Frame):
                 "Point dX/dY/dZ: defines the TCP Point relative to current TCP.",
             ]
             for s in steps:
-                ttk.Label(wrap, text="• " + s).pack(anchor="w")
+                ttk.Label(wrap, text="- " + s).pack(anchor="w")
 
         ttk.Button(
             row_fix,
@@ -2190,7 +2266,7 @@ class ExecuteApp(ttk.Frame):
             _plane_log("Plane set to world XY at current TCP.")
             _plane_send_frame()
 
-        def _plane_arc_points():
+        def _plane_arc_data():
             if not self.plane_defined:
                 _plane_log("Plane not defined. Use 'Set plane from current TCP'.")
                 return None
@@ -2248,6 +2324,48 @@ class ExecuteApp(ttk.Frame):
 
             arc_len = abs(delta) * r0
             try:
+                feed = float(self.plane_feed.get())
+            except Exception:
+                feed = 3000.0
+            return {
+                "origin": origin,
+                "u_axis": u_axis,
+                "v_axis": v_axis,
+                "n_axis": n_axis,
+                "rpy": (roll, pitch, yaw),
+                "u0": u0,
+                "v0": v0,
+                "w": w,
+                "u1": u1,
+                "v1": v1,
+                "cx": cx,
+                "cy": cy,
+                "r0": r0,
+                "arc_len": arc_len,
+                "start": start,
+                "delta": delta,
+                "feed": feed,
+            }
+
+        def _plane_arc_points():
+            arc = _plane_arc_data()
+            if not arc:
+                return None
+            origin = arc["origin"]
+            u_axis = arc["u_axis"]
+            v_axis = arc["v_axis"]
+            n_axis = arc["n_axis"]
+            w = arc["w"]
+            cx = arc["cx"]
+            cy = arc["cy"]
+            r0 = arc["r0"]
+            start = arc["start"]
+            delta = arc["delta"]
+            arc_len = arc["arc_len"]
+            feed = arc["feed"]
+            roll, pitch, yaw = arc["rpy"]
+
+            try:
                 seg_len = float(self.plane_seg_len.get())
             except Exception:
                 seg_len = 2.0
@@ -2256,20 +2374,155 @@ class ExecuteApp(ttk.Frame):
             pts = []
             for i in range(1, steps + 1):
                 ang = start + delta * (i / steps)
-                u = cx + r0 * math.cos(ang)
-                v = cy + r0 * math.sin(ang)
-                x = origin[0] + u * u_axis[0] + v * v_axis[0] + w * n_axis[0]
-                y = origin[1] + u * u_axis[1] + v * v_axis[1] + w * n_axis[1]
-                z = origin[2] + u * u_axis[2] + v * v_axis[2] + w * n_axis[2]
+                uu = cx + r0 * math.cos(ang)
+                vv = cy + r0 * math.sin(ang)
+                x = origin[0] + uu * u_axis[0] + vv * v_axis[0] + w * n_axis[0]
+                y = origin[1] + uu * u_axis[1] + vv * v_axis[1] + w * n_axis[1]
+                z = origin[2] + uu * u_axis[2] + vv * v_axis[2] + w * n_axis[2]
                 pts.append((x, y, z))
-            try:
-                feed = float(self.plane_feed.get())
-            except Exception:
-                feed = 3000.0
             _plane_log(
                 f"Plane arc: {len(pts)} segments, len={arc_len:.1f}mm, dir={self.plane_dir.get()}"
             )
             return pts, (roll, pitch, yaw), feed
+
+        def _plane_detect_native_plane(n_axis):
+            ax = abs(n_axis[0])
+            ay = abs(n_axis[1])
+            az = abs(n_axis[2])
+            tol = 0.95
+            if az >= ay and az >= ax and az >= tol:
+                return {"gplane": "G17", "a": ("X", 0), "b": ("Y", 1), "c": ("Z", 2), "offsets": ("I", "J")}
+            if ay >= ax and ay >= az and ay >= tol:
+                return {"gplane": "G18", "a": ("X", 0), "b": ("Z", 2), "c": ("Y", 1), "offsets": ("I", "K")}
+            if ax >= ay and ax >= az and ax >= tol:
+                return {"gplane": "G19", "a": ("Y", 1), "b": ("Z", 2), "c": ("X", 0), "offsets": ("J", "K")}
+            return None
+
+        def _plane_world_axis_value(origin, u_axis, v_axis, n_axis, uu, vv, ww, idx):
+            return (
+                origin[idx]
+                + uu * u_axis[idx]
+                + vv * v_axis[idx]
+                + ww * n_axis[idx]
+            )
+
+        def _plane_arc_queue_native():
+            arc = _plane_arc_data()
+            if not arc:
+                return
+
+            plane = _plane_detect_native_plane(arc["n_axis"])
+            if not plane:
+                _plane_log("Native G2/G3 requires an almost-canonical plane normal (XY/XZ/YZ).")
+                return
+
+            origin = arc["origin"]
+            u_axis = arc["u_axis"]
+            v_axis = arc["v_axis"]
+            n_axis = arc["n_axis"]
+            w = arc["w"]
+            u0 = arc["u0"]
+            v0 = arc["v0"]
+            u1 = arc["u1"]
+            v1 = arc["v1"]
+            cx = arc["cx"]
+            cy = arc["cy"]
+            feed = arc["feed"]
+
+            an, ai = plane["a"]
+            bn, bi = plane["b"]
+            cn, ci = plane["c"]
+            off_a, off_b = plane["offsets"]
+
+            start_a = _plane_world_axis_value(origin, u_axis, v_axis, n_axis, u0, v0, w, ai)
+            start_b = _plane_world_axis_value(origin, u_axis, v_axis, n_axis, u0, v0, w, bi)
+            end_a = _plane_world_axis_value(origin, u_axis, v_axis, n_axis, u1, v1, w, ai)
+            end_b = _plane_world_axis_value(origin, u_axis, v_axis, n_axis, u1, v1, w, bi)
+            end_c = _plane_world_axis_value(origin, u_axis, v_axis, n_axis, u1, v1, w, ci)
+            center_a = _plane_world_axis_value(origin, u_axis, v_axis, n_axis, cx, cy, w, ai)
+            center_b = _plane_world_axis_value(origin, u_axis, v_axis, n_axis, cx, cy, w, bi)
+            off_val_a = center_a - start_a
+            off_val_b = center_b - start_b
+
+            gcode = (
+                f"{self.plane_dir.get()} "
+                f"{an}{end_a:.3f} {bn}{end_b:.3f} {cn}{end_c:.3f} "
+                f"{off_a}{off_val_a:.3f} {off_b}{off_val_b:.3f} "
+                f"F{feed:.0f}"
+            )
+            self.enqueue("G90")
+            self.enqueue(plane["gplane"])
+            self.enqueue(gcode)
+            _plane_log(f"Native arc queued: {plane['gplane']} + {self.plane_dir.get()} ({an}{bn}{cn})")
+
+        def _plane_queue_gcode_example(filename, fallback_lines, label):
+            base_dir_local = os.path.dirname(os.path.abspath(__file__))
+            example_path = os.path.join(base_dir_local, "data", "examples", filename)
+            lines = []
+            try:
+                with open(example_path, "r", encoding="utf-8") as f:
+                    lines = [ln.strip() for ln in f.readlines() if ln.strip()]
+            except Exception:
+                lines = list(fallback_lines)
+            for ln in lines:
+                self.enqueue(ln)
+            _plane_log(f"Queued {label} ({len(lines)} lines) from {example_path}.")
+
+        def _plane_queue_3dp_example_g17():
+            _plane_queue_gcode_example(
+                "plane_g2g3_3dp_example.gcode",
+                [
+                    "; 3D printer G2/G3 quick example (G17 XY)",
+                    "G21",
+                    "G90",
+                    "G17",
+                    "G0 X20.000 Y20.000 Z0.300 F3000",
+                    "G2 X60.000 Y20.000 I20.000 J0.000 F1200",
+                    "G3 X20.000 Y20.000 I-20.000 J0.000 F1200",
+                ],
+                "3DP example G17",
+            )
+
+        def _plane_queue_3dp_example_g18():
+            _plane_queue_gcode_example(
+                "plane_g2g3_3dp_example_g18.gcode",
+                [
+                    "; 3D printer G2/G3 quick example (G18 XZ)",
+                    "G21",
+                    "G90",
+                    "G18",
+                    "G0 X20.000 Y0.300 Z20.000 F3000",
+                    "G2 X60.000 Z20.000 I20.000 K0.000 F1200",
+                    "G3 X20.000 Z20.000 I-20.000 K0.000 F1200",
+                ],
+                "3DP example G18",
+            )
+
+        def _plane_queue_3dp_example_g19():
+            _plane_queue_gcode_example(
+                "plane_g2g3_3dp_example_g19.gcode",
+                [
+                    "; 3D printer G2/G3 quick example (G19 YZ)",
+                    "G21",
+                    "G90",
+                    "G19",
+                    "G0 X0.300 Y20.000 Z20.000 F3000",
+                    "G2 Y60.000 Z20.000 J20.000 K0.000 F1200",
+                    "G3 Y20.000 Z20.000 J-20.000 K0.000 F1200",
+                ],
+                "3DP example G19",
+            )
+
+        def _plane_queue_3dp_examples_all():
+            self.enqueue("; ---- Dry-run bundle start: G17/G18/G19 ----")
+            self.enqueue("; ---- Example G17 ----")
+            _plane_queue_3dp_example_g17()
+            self.enqueue("; ---- Example G18 ----")
+            _plane_queue_3dp_example_g18()
+            self.enqueue("; ---- Example G19 ----")
+            _plane_queue_3dp_example_g19()
+            self.enqueue("; ---- Dry-run bundle end ----")
+            _plane_log("Queued dry-run bundle: G17 + G18 + G19.")
 
         def _plane_arc_send():
             data = _plane_arc_points()
@@ -2459,19 +2712,44 @@ class ExecuteApp(ttk.Frame):
             text="Queue arc",
             command=_plane_arc_queue,
         ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            arc_row4,
+            text="Queue native G2/G3",
+            command=_plane_arc_queue_native,
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            arc_row4,
+            text="Queue 3DP G17",
+            command=_plane_queue_3dp_example_g17,
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            arc_row4,
+            text="Queue 3DP G18",
+            command=_plane_queue_3dp_example_g18,
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            arc_row4,
+            text="Queue 3DP G19",
+            command=_plane_queue_3dp_example_g19,
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            arc_row4,
+            text="Queue ALL 3DP",
+            command=_plane_queue_3dp_examples_all,
+        ).pack(side=tk.LEFT, padx=(6, 0))
 
-        # Tab: Befehle
+        # Tab: Commands
         tab_commands = ttk.Frame(pos_tabs)
-        pos_tabs.add(tab_commands, text="📘 Befehle")
+        pos_tabs.add(tab_commands, text="Commands")
 
 
 
         # Tab: Simulation / Pose
         tab_pose = ttk.Frame(pos_tabs)
-        pos_tabs.add(tab_pose, text="🧩 Simulation / Pose")
+        pos_tabs.add(tab_pose, text="Simulation / Pose")
 
         # =====================================================
-        # 🧩 RoboSim Visualizer Integration (umgezogen aus oberem Tab)
+        #  RoboSim visualizer integration (moved from top tab)
         # =====================================================
         try:
             import psutil
@@ -2479,8 +2757,8 @@ class ExecuteApp(ttk.Frame):
             psutil = None
 
         def _get_base_dir():
-            """Ermittle Basisordner, egal ob Python oder gepackte EXE."""
-            if getattr(sys, 'frozen', False):  # läuft als .exe (PyInstaller)
+            """Resolve base directory for both Python and packaged EXE."""
+            if getattr(sys, 'frozen', False):  # running as .exe (PyInstaller)
                 return os.path.dirname(sys.executable)
             return os.path.dirname(os.path.abspath(__file__))
 
@@ -2501,7 +2779,7 @@ class ExecuteApp(ttk.Frame):
         def _find_visualizer_process():
             """Suche laufende RoboSim-Prozesse, um Doppelstart zu verhindern."""
             if psutil is None:
-                _log_visualizer("ℹ️ psutil fehlt; Prozess-Check deaktiviert.")
+                _log_visualizer("1  psutil missing; process check disabled.")
                 return None
             try:
                 for p in psutil.process_iter(attrs=["pid", "name", "cmdline"]):
@@ -2517,22 +2795,22 @@ class ExecuteApp(ttk.Frame):
             return None
 
         def start_visualizer_window():
-            """Startet den RoboSim-Visualizer als eigenen Prozess (einmalig)."""
+            """Start the RoboSim visualizer as a separate process (single instance)."""
             existing = _find_visualizer_process()
             if existing:
-                _log_visualizer(f"ℹ️ Visualizer läuft bereits (PID={existing.pid}) – kein neuer Start.")
+                _log_visualizer(f"1  Visualizer is already running (PID={existing.pid}) - no new start.")
                 return
 
             try:
-                # Wenn EXE vorhanden (z. B. im dist-Ordner), diese bevorzugen
+                # If EXE exists (e.g., in dist folder), prefer it
                 if os.path.exists(VISUALIZER_EXE):
-                    _log_visualizer(f"🚀 Starte Visualizer EXE: {VISUALIZER_EXE}")
+                    _log_visualizer(f" Starting visualizer EXE: {VISUALIZER_EXE}")
                     subprocess.Popen([VISUALIZER_EXE], cwd=BASE_DIR)
                 elif os.path.exists(VISUALIZER_SCRIPT):
                     if getattr(sys, "frozen", False):
-                        _log_visualizer("❌ Visualizer EXE fehlt; im frozen-build kann kein .py gestartet werden.")
+                        _log_visualizer(" Visualizer EXE missing; frozen build cannot start .py script.")
                         return
-                    _log_visualizer(f"🚀 Starte Visualizer PY: {VISUALIZER_SCRIPT}")
+                    _log_visualizer(f" Starting visualizer PY: {VISUALIZER_SCRIPT}")
                     log_path = os.path.join(BASE_DIR, "robosim_visualizer_start.log")
                     try:
                         log_fp = open(log_path, "a", encoding="utf-8")
@@ -2546,27 +2824,31 @@ class ExecuteApp(ttk.Frame):
                     )
                     if log_fp:
                         log_fp.close()
-                        _log_visualizer(f"ℹ️ Visualizer-Startlog: {log_path}")
+                    _log_visualizer(f"1  Visualizer startup log: {log_path}")
                 else:
-                    _log_visualizer(f"❌ Kein Visualizer gefunden in {BASE_DIR}")
+                    _log_visualizer(f" No visualizer found in {BASE_DIR}")
                     return
 
                 time.sleep(0.5)
-                _log_visualizer("✅ Visualizer erfolgreich gestartet.")
+                _log_visualizer("... Visualizer started successfully.")
+                try:
+                    self.after(700, self._send_vis_robot_profile)
+                except Exception:
+                    pass
             except Exception as e:
-                _log_visualizer(f"❌ Visualizer-Start fehlgeschlagen: {e}")
+                _log_visualizer(f" Visualizer start failed: {e}")
 
-        # ---- UI im Tab hinzufügen ----
+        # ---- Add UI into tab ----
         ttk.Label(tab_pose, text="RoboSim Visualizer", font=("Segoe UI", 12, "bold")).pack(pady=10)
         ttk.Button(
             tab_pose,
-            text="🧭 Öffne Simulation (externer Prozess)",
+            text="Open Simulation (external process)",
             command=start_visualizer_window
         ).pack(pady=20)
 
 
         # =========================
-        # 📘 Befehlsreferenz (umgezogen aus oberer Tab-Leiste)
+        #   Command reference (moved from top tab bar)
         # =========================
         frame_text = ttk.Frame(tab_commands)
         frame_text.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
@@ -2579,62 +2861,62 @@ class ExecuteApp(ttk.Frame):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         text_commands.config(yscrollcommand=scrollbar.set)
 
-        # ---- Inhalt (aus oberem Tab kopiert) ----
+        # ---- Content (copied from top tab) ----
         command_reference = """\
-📘 FluidNC / G-Code Befehlsübersicht
-===================================
+  FluidNC / G-code command reference
+====================================
 
-🧭 Maschinensteuerung
----------------------
-$X                  - Unlock / Entsperren nach Alarm
-$H                  - Alle Achsen homen
-$HX / $HY / $HZ     - Nur bestimmte Achse homen
-$$                  - Zeigt aktuelle Parameter (Settings)
-$G                  - Aktive G-Code Modi anzeigen
-$I                  - Firmware-/Systeminformationen
-!                   - Feed Hold (Pause)
-~                   - Resume (Fortsetzen)
-Ctrl+X (⛔)          - Software Reset / Not-Aus
+ Machine control
+-----------------
+$X                  - Unlock after alarm
+$H                  - Home all axes
+$HX / $HY / $HZ     - Home specific axis
+$$                  - Show current parameters (settings)
+$G                  - Show active G-code modes
+$I                  - Firmware/system information
+!                   - Feed hold (pause)
+~                   - Resume
+Ctrl+X ()          - Software reset / emergency stop
 
-⚙️ Bewegungsbefehle
----------------------
-G90                 - Absolute Koordinaten
-G91                 - Relative Koordinaten
-G92 X0 Y0 Z0 A0 B0  - Nullpunkt setzen
-G0 X10              - Schnelle Positionierung zu X10
-G1 X10 F500         - Bewegung zu X10 mit Feedrate 500
-G4 P2               - Pause 2 Sekunden
+TM  Motion commands
+-----------------
+G90                 - Absolute coordinates
+G91                 - Relative coordinates
+G92 X0 Y0 Z0 A0 B0  - Set current position as zero
+G0 X10              - Rapid move to X10
+G1 X10 F500         - Move to X10 with feedrate 500
+G4 P2               - Dwell for 2 seconds
 
-🔩 Achs- & Limit-Konfiguration
--------------------------------
-$130..$134          - Max travel für X..B (Soft Limits)
-$120..$124          - Beschleunigungen (mm/s²)
-$110..$114          - Max feedrate pro Achse (mm/min)
-$20 / $21           - Soft/Hard Limits aktivieren
-$N / $N+            - Startup-Befehle konfigurieren
+ Axis and limit configuration
+------------------------------
+$130..$134          - Max travel for X..B (soft limits)
+$120..$124          - Accelerations (mm/s2)
+$110..$114          - Max feedrate per axis (mm/min)
+$20 / $21           - Enable soft/hard limits
+$N / $N+            - Configure startup commands
 
-🖐️ Werkzeug / Greifer / Spindel
--------------------------------
-M3 S0               - Greifer öffnen / Spindel an (S=0)
-M3 S1000            - Greifer schließen / volle Drehzahl
-M4                  - Spindel im Gegenuhrzeigersinn
-M5                  - Spindel stoppen
+  Tool / gripper / spindle
+---------------------------
+M3 S0               - Open gripper / spindle on (S=0)
+M3 S1000            - Close gripper / full speed
+M4                  - Spindle counter-clockwise
+M5                  - Stop spindle
 
-🔍 Diagnose & Status
----------------------
-?                   - Aktueller Status (MPos, Endstops)
-$#                  - Koordinatensysteme anzeigen
-$Help               - Hilfe / verfügbare Kommandos
-$Startup/Show       - Startup-Datei anzeigen
-$Erase/All          - Alle gespeicherten Einstellungen löschen
-$CD / $Dir          - Dateisystem durchsuchen (ältere Versionen)
-$PrintConfig        - Aktuelle geladene YAML anzeigen
+ Diagnostics and status
+------------------------
+(TM)                   - Current status (MPos, endstops)
+$#                  - Show coordinate systems
+$Help               - Help / available commands
+$Startup/Show       - Show startup file
+$Erase/All          - Erase all saved settings
+$CD / $Dir          - Browse file system (older versions)
+$PrintConfig        - Show currently loaded YAML
 
-💾 Sonstiges
-------------
-Ctrl-X              - Neustart / Reset
-$Report/State       - Aktuellen Maschinenstatusbericht ausgeben
-$Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
+34 Misc
+-------
+Ctrl-X              - Restart / reset
+$Report/State       - Print current machine status
+$Report/Startup     - Show startup file loaded at boot
 """
 
         text_commands.insert("1.0", command_reference)
@@ -2642,7 +2924,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
 
         
         # ============================================
-        # 📏 Inhalt für Tab „Manual Axis Control“
+        #  Content for "Manual Axis Control" tab
         # ============================================
         posf = ttk.LabelFrame(tab_manual, text="Position / Manual Axis Control")
         posf.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -2656,7 +2938,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
 
         # --- Live Move default ON ---
         self.live_move = tk.BooleanVar(value=True)
-        ttk.Checkbutton(header, text="🟩 Live Move (on release)",
+        ttk.Checkbutton(header, text="Live Move (on release)",
                         variable=self.live_move).pack(side=tk.LEFT, padx=(4, 10))
 
         # --- Absolute (G90) ---
@@ -2664,24 +2946,24 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                         variable=self.mode_absolute).pack(side=tk.LEFT, padx=(0, 10))
 
         # --- Poll Positions ---
-        ttk.Checkbutton(header, text="Poll Positions (?)",
+        ttk.Checkbutton(header, text="Poll Positions ((TM))",
                         variable=self.poll_positions).pack(side=tk.LEFT, padx=(0, 25))
-        ttk.Button(header, text="Zero (G92)", command=self.do_zero).pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(header, text="Zero (G92)", command=self.manual_zero_current_pose).pack(side=tk.RIGHT, padx=(0, 6))
 
 
         # ======================================================
-        # MANUAL SPEED FACTOR – in der gleichen Zeile
+        # MANUAL SPEED FACTOR  in der gleichen Zeile
         # ======================================================
         style = ttk.Style()
 
-        # ---- Stil für normale Buttons ----
+        # ---- Style for normal buttons ----
         style.configure(
             "SpeedButton.TButton",
             padding=(6, 3),          # Innenpadding (links/rechts, oben/unten)
-            font=("Segoe UI", 9),    # Schriftgröße
+            font=("Segoe UI", 9),    # font size
         )
 
-        # ---- Stil für ausgewählten Button ----
+        # ---- Style for selected button ----
         style.configure(
             "SpeedButtonSelected.TButton",
             padding=(6, 3),
@@ -2690,7 +2972,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             foreground="white"
         )
 
-        # ---- Höhe/breite in Pixel erzwingen ----
+        # ---- Force width/height in pixels ----
         style.layout("SpeedButton.TButton", [
             ('Button.border', {'sticky': 'nswe', 'children': [
                 ('Button.padding', {'sticky': 'nswe', 'children': [
@@ -2711,7 +2993,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         def _set_manual_factor(val):
             self.manual_speed_factor.set(val)
 
-            # --- Buttons farblich setzen ---
+            # --- Set button colors ---
             for denom, btn in factor_buttons.items():
                 # float-safe comparison
                 if abs(val - 1/denom) < 1e-9:
@@ -2719,7 +3001,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 else:
                     btn.configure(style="SpeedButton.TButton")
 
-            # Nur loggen, wenn logger existiert
+            # Log only if logger exists
             if hasattr(self, "txt_log"):
                 self.log(f"Manual Speed Factor: 1/{int(1/val)}")
 
@@ -2733,7 +3015,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 command=lambda d=denom: _set_manual_factor(1/d)
             )
 
-            # ---- Größe & Abstand ----
+            # ---- Size & spacing ----
             b.pack(side=tk.LEFT, padx=4, pady=2)
             b.configure(width=6)
 
@@ -2746,7 +3028,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
 
 
         # ======================================================
-        # MANUAL AXIS CONTROL — Buttons oben, Slider unten
+        # MANUAL AXIS CONTROL  Buttons oben, Slider unten
         # ======================================================
         self.axis_labels = {}
         self.axis_vars = {}
@@ -2770,7 +3052,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         # Hilfsfunktion: Nach jeder Bewegung ALLE Felder aktualisieren
         # ======================================================
         def update_all_positions():
-            """Aktualisiert alle Achsen anhand der letzten Statusdaten."""
+            """Update all axes using the latest status data."""
             st = getattr(self.client, "last_status", None)
             if not st or "MPos" not in st:
                 return
@@ -2797,7 +3079,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             row = ttk.Frame(posf)
             row.pack(fill=tk.X, pady=1)
 
-            # Achsenlabel
+            # Axis label
             ttk.Label(row, text=ax, width=3).pack(side=tk.LEFT)
 
             # mpos-Anzeige
@@ -2824,7 +3106,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 self.client.send_line("G90")
                 self.client.send_line(f"G1 {ax}{target:.3f} F{F:.0f}")
 
-                self.log(f"{ax} → {target:.3f} ({pct:+d}%) @F={F}")
+                self.log(f"{ax}  {target:.3f} ({pct:+d}%) @F={F}")
                 self.update_all_positions()
 
             pct_frame = ttk.Frame(row, relief="solid", borderwidth=1)
@@ -2895,11 +3177,11 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             canvas = tk.Canvas(slider_wrap, width=600, height=22, highlightthickness=0)
             canvas.pack()
 
-            # ---- Achsen-Skala im Canvas ----
+            # ---- Axis scale in canvas ----
             scale_width = 600
             scale_height = 22
 
-            # Verhältnis Funktion (Wert → Pixel)
+            # Mapping function (value -> pixel)
             def val_to_x(v):
                 return (v - lo) / (hi - lo) * scale_width
 
@@ -2907,7 +3189,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             zero_x = val_to_x(0)
             canvas.create_line(zero_x, 0, zero_x, scale_height, fill="black", width=2)
 
-            # große Striche: immer bei 10er-Schritten
+            # major ticks: always at 10-step intervals
             for v in range(int(lo - lo % 10), int(hi) + 1, 10):
                 x = val_to_x(v)
                 canvas.create_line(x, scale_height - 14, x, scale_height, fill="black", width=2)
@@ -2963,7 +3245,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             # Slider->Entry Sync (HAT bisher gefehlt)
             # -----------------------
             def on_var_write(*_ignored, ax=ax, ent=ent, var=var):
-                # während der aktiven Eingabe nicht überschreiben
+                # do not overwrite during active input
                 if getattr(self, "_user_editing", {}).get(ax, False):
                     return
                 ent.delete(0, tk.END)
@@ -2977,7 +3259,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 F = map_speed(self.speed_val.get()) * self.manual_speed_factor.get()
                 self.client.send_line("G90")
                 self.client.send_line(f"G1 {ax}{val:.3f} F{F:.0f}")
-                self.log(f"{ax} → {val:.3f} @F={F}")
+                self.log(f"{ax}  {val:.3f} @F={F}")
                 # nach Bewegung aktualisieren
                 self.update_position_display()
                 return "break"
@@ -3020,12 +3302,12 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 F = map_speed(self.speed_val.get()) * self.manual_speed_factor.get()
                 self.client.send_line("G90")
                 self.client.send_line(f"G1 {ax}{v:.3f} F{F:.0f}")
-                self.log(f"{ax} → {v:.3f} @F={F}")
+                self.log(f"{ax}  {v:.3f} @F={F}")
                 self.update_position_display()
 
-            # --- Neue Funktion: komplette Pose → Queue ---
+            # --- Neue Funktion: komplette Pose  Queue ---
             def _btn_pose_toQ(ax=ax):
-                # Alle Achsenwerte einsammeln
+                # Collect all axis values
                 parts = []
                 for ax2 in AXES:
                     ent2 = self.axis_entries.get(ax2)
@@ -3049,7 +3331,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
 
                 # In Queue schieben
                 self.enqueue(gline)
-                self.log(f"Pose → Queue: {gline}")
+                self.log(f"Pose  Queue: {gline}")
 
 
             ttk.Button(btn_block, text="ToQ",   width=4, style="FlatMini.TButton", command=_btn_toQ).pack(side=tk.LEFT, padx=1)
@@ -3075,14 +3357,14 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 F = map_speed(self.speed_val.get()) * self.manual_speed_factor.get()
                 self.client.send_line("G90")
                 self.client.send_line(f"G1 {ax}{val:.3f} F{F:.0f}")
-                self.log(f"{ax} slide → {val:.3f} @F={F}")
+                self.log(f"{ax} slide  {val:.3f} @F={F}")
                 self.update_position_display()
 
             s.bind("<ButtonPress-1>", _press)
             s.bind("<ButtonRelease-1>", _release)
 
         # =====================================================
-        # ⚙️ SPEED-Kontrolle – mit 3 MaxSpeed-Modi (Low/Mid/High)
+        # TM  SPEED control with 3 MaxSpeed modes (Low/Mid/High)
         # =====================================================
         spdf = ttk.LabelFrame(wrap, text="Speed", width=240, height=220)
         spdf.pack(side=tk.LEFT, fill=tk.Y, padx=2, pady=2)
@@ -3093,7 +3375,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         self.max_feed = tk.DoubleVar(value=15000.0)
         self.speed_mode = tk.StringVar(value="Mid")
 
-        # --- Header mit Titel + aktuellem Wert ---
+        # --- Header with title + current value ---
         hdr = ttk.Frame(spdf)
         hdr.pack(fill="x", pady=(4, 2))
         ttk.Label(hdr, text="Speed:", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(8, 2))
@@ -3114,7 +3396,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             ttk.Button(mode_frame, text=m, width=6, style="SpeedMode.TButton",
                        command=lambda mm=m: _set_mode(mm)).pack(side=tk.LEFT, padx=2)
 
-        # --- Speed-Slider (0–1000) ---
+        # --- Speed-Slider (01000) ---
         speed_slider = ttk.Scale(
             spdf, from_=0, to=1000, variable=self.speed_val,
             orient=tk.HORIZONTAL, length=220
@@ -3148,48 +3430,53 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             self.speed_val.set(val)
             mm = map_speed(val)
             self.lbl_speed_val.config(text=f"{self.speed_val.get():.1f}")
-            self.log(f"Speed auf {pct}% gesetzt ({val}/1000 → {mm:.0f} mm/min @ {self.speed_mode.get()})")
+            self.log(f"Speed set to {pct}% ({val}/1000 -> {mm:.0f} mm/min @ {self.speed_mode.get()})")
 
         self._set_speed_percent = _set_speed_percent_local
 
         # =====================================================
-        # 🏠 HOMING / CONTROL – 3×4 Matrix IM Speed/Accel-Frame
+        #   HOMING / CONTROL  34 Matrix IM Speed/Accel-Frame
         # =====================================================
         style.configure("HomingCtrl.TButton", padding=(6, 1), font=("Segoe UI", 9))
         ctrl = ttk.LabelFrame(spdf, text="Homing / Control")
         ctrl.pack(fill=tk.X, padx=6, pady=(8, 4))
-
         btns = [
-            ("🏠 $H", lambda: self.send_now("$H")),
-            ("🏠 $HX", lambda: self.send_now("$HX")),
-            ("🏠 $HY", lambda: self.send_now("$HY")),
-            ("🏠 $HZ", lambda: self.send_now("$HZ")),
-            ("🏠 $HA", lambda: self.send_now("$HA")),
-            ("🏠 $HB", lambda: self.send_now("$HB")),
-            ("🏠 $HC", lambda: self.send_now("$HC")),
-            ("🔓 $X", lambda: self.send_now("$X")),
-            ("⚙️ Zero", self.do_zero),
-            ("↩ Home", self.goto_home),
-            ("↩→Q", self.enqueue_home),
-            ("🖐️ Auf", lambda: self.send_now("M3 S0")),
-            ("✊ Zu", lambda: self.send_now("M3 S1000")),
-            ("Pose 1", lambda: self.send_now("G1 X45 Y90 Z45 A0 B0 C0 F6000")),
-            ("Pose 2", lambda: self.send_now("G1 X45 Y90 Z-45 A0 B0 C0 F6000")),
+            ("Home $H", lambda: self.send_now("$H"), "homing_global"),
+            ("Home $HX", lambda: self.send_now("$HX"), "homing_axis"),
+            ("Home $HY", lambda: self.send_now("$HY"), "homing_axis"),
+            ("Home $HZ", lambda: self.send_now("$HZ"), "homing_axis"),
+            ("Home $HA", lambda: self.send_now("$HA"), "homing_axis"),
+            ("Home $HB", lambda: self.send_now("$HB"), "homing_axis"),
+            ("Home $HC", lambda: self.send_now("$HC"), "homing_axis"),
+            ("Unlock $X", lambda: self.send_now("$X"), "other"),
+            ("Zero", self.manual_zero_current_pose, "other"),
+            ("Go Home", self.goto_home, "other"),
+            ("Home->Q", self.enqueue_home, "other"),
+            ("Gripper Open", lambda: self.send_now("M3 S0"), "other"),
+            ("Gripper Close", lambda: self.send_now("M3 S1000"), "other"),
+            ("Pose 1", lambda: self.send_now("G1 X45 Y90 Z45 A0 B0 C0 F6000"), "other"),
+            ("Pose 2", lambda: self.send_now("G1 X45 Y90 Z-45 A0 B0 C0 F6000"), "other"),
         ]
-        # Buttons im Grid (3 Spalten × 4 Zeilen)
-        for i, (txt, cmd) in enumerate(btns):
+        self._homing_global_buttons = []
+        self._homing_axis_buttons = []
+        # Buttons im Grid (3 Spalten x 4 Zeilen)
+        for i, (txt, cmd, kind) in enumerate(btns):
             r, c = divmod(i, 3)
-            ttk.Button(ctrl, text=txt, width=8, command=cmd, style="HomingCtrl.TButton")\
-                .grid(row=r, column=c, padx=2, pady=1, sticky="ew")
+            btn = ttk.Button(ctrl, text=txt, width=10, command=cmd, style="HomingCtrl.TButton")
+            btn.grid(row=r, column=c, padx=2, pady=1, sticky="ew")
+            if kind == "homing_global":
+                self._homing_global_buttons.append(btn)
+            elif kind == "homing_axis":
+                self._homing_axis_buttons.append(btn)
 
         for c in range(3):
             ctrl.columnconfigure(c, weight=1)
 
         # =====================================================
-        # 🟩 Farbiger STATUS-BLOCK direkt unter Tilt
-        # (eigener StringVar, nicht status_var überschreiben)
+        #  Farbiger STATUS-BLOCK direkt unter Tilt
+        # (own StringVar, do not overwrite status_var)
         # =====================================================
-        self.status_block_var = tk.StringVar(value="Status: —")
+        self.status_block_var = tk.StringVar(value="Status: -")
         self.lbl_status_block = tk.Label(
             spdf,
             textvariable=self.status_block_var,
@@ -3205,7 +3492,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         self.lbl_status_block.pack(fill="x", padx=8, pady=(4, 8))
 
         # =====================================================
-        # 🧲 Endstop-Anzeige – kompakt unter Status
+        # 2 Endstop-Anzeige  kompakt unter Status
         # =====================================================
         endstop_frame = ttk.Frame(spdf)
         endstop_frame.pack(fill="x", padx=8, pady=(0, 4))
@@ -3226,7 +3513,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             self.endstop_indicators[ax] = (c, oval, "unknown")
 
         # =====================================================
-        # 🌍 TCP Pose – zentrale 6DOF FK Anzeige
+        #  TCP Pose  zentrale 6DOF FK Anzeige
         # =====================================================
 
         self.tcp_panel = tcp_pose_module.TcpPosePanel(
@@ -3255,7 +3542,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                     if hasattr(self.kinematics_tabs, attr):
                         return getattr(self.kinematics_tabs, attr)()
             if hasattr(self, "log"):
-                self.log("⛔ No kinematics queue function found.")
+                self.log(" No kinematics queue function found.")
         ttk.Button(
             spdf,
             text="Sequence to Queue",
@@ -3334,7 +3621,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         except Exception:
             pass
 
-        # Panel aktivieren (Start des Update-Loops)
+        # Enable panel (start update loop)
         try:
             self.tcp_panel.start()
         except:
@@ -3349,8 +3636,8 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         self.vision_right_label.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self._toggle_right_vision()
         self.after(80, self._tick_right_vision)
-        ttk.Button(allf, text="🚀 To Queue", command=_btn_pose_toQ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(allf, text="⚙️ Set All Now", command=self.set_all_now).pack(side=tk.LEFT, padx=2)
+        ttk.Button(allf, text="To Queue", command=_btn_pose_toQ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(allf, text="Set All Now", command=self.set_all_now).pack(side=tk.LEFT, padx=2)
 
 
 
@@ -3367,7 +3654,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         ttk.Label(cline, text="Command Line (G-Code):").pack(side=tk.LEFT)
         self.entry_cmd = ttk.Entry(cline)
         self.entry_cmd.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
-        ttk.Button(cline, text="→ Queue", command=self.cli_add_to_program).pack(side=tk.LEFT, padx=3)
+        ttk.Button(cline, text="To Queue", command=self.cli_add_to_program).pack(side=tk.LEFT, padx=3)
         ttk.Button(cline, text="Send Now", command=self.cli_send_now).pack(side=tk.LEFT, padx=3)
 
         # ---- Log Window ----
@@ -3381,13 +3668,13 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         # ---- Queue Buttons ----
         pbtn = ttk.Frame(prog)
         pbtn.pack(fill=tk.X, padx=6, pady=(2, 8))
-        ttk.Button(pbtn, text="Load (→ Queue)", command=self.load_program).pack(side=tk.LEFT)
-        ttk.Button(pbtn, text="💾 Save Queue", command=self.save_program).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pbtn, text="Load (To Queue)", command=self.load_program).pack(side=tk.LEFT)
+        ttk.Button(pbtn, text="Save Queue", command=self.save_program).pack(side=tk.LEFT, padx=2)
         ttk.Button(pbtn, text=" Clear Queue", command=self.clear_program).pack(side=tk.LEFT, padx=2)      
-        ttk.Button(pbtn, text="▶ Run", command=self.start_run).pack(side=tk.LEFT, padx=2)
-        ttk.Button(pbtn, text="⏸ Pause (!)", command=self.pause_run).pack(side=tk.LEFT, padx=2)
-        ttk.Button(pbtn, text="▶ Resume (~)", command=self.resume_run).pack(side=tk.LEFT, padx=2)
-        ttk.Button(pbtn, text="⛔ Stop / Abbruch", command=self.stop_abort).pack(side=tk.LEFT, padx=6)
+        ttk.Button(pbtn, text="Run", command=self.start_run).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pbtn, text="Pause (!)", command=self.pause_run).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pbtn, text="Resume (~)", command=self.resume_run).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pbtn, text="Stop / Abort", command=self.stop_abort).pack(side=tk.LEFT, padx=6)
         ttk.Checkbutton(pbtn, text="Repeat", variable=self.repeat).pack(side=tk.LEFT, padx=6)
         ttk.Label(pbtn, text="x").pack(side=tk.LEFT, padx=(2, 0))
         ttk.Entry(pbtn, textvariable=self.repeat_times, width=4, justify="center").pack(side=tk.LEFT, padx=(2, 8))
@@ -3472,6 +3759,8 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 self.gamepad_config_ui.reload_into_ui()
             except Exception:
                 pass
+        self._apply_profile_runtime_flags(log_note=True)
+        self._send_vis_robot_profile()
 
     def get_gamepad_config(self):
         data = self.get_profile_section("gamepad", default={})
@@ -3481,13 +3770,13 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         if not isinstance(data, dict):
             return False, "Gamepad config invalid."
         self.set_profile_section("gamepad", data, save=True)
-        return True, f"Config gespeichert -> {self.profile_path}"
+        return True, f"Config saved -> {self.profile_path}"
 
     def save_cam_to_base(self, data):
         if not isinstance(data, dict):
             return False, "cam_to_base invalid."
         self.set_profile_section("cam_to_base", data, save=True)
-        return True, f"cam_to_base gespeichert -> {self.profile_path}"
+        return True, f"cam_to_base saved -> {self.profile_path}"
 
     def save_dh_model_to_profile(self, model):
         if not isinstance(model, dict):
@@ -3498,6 +3787,133 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         if hasattr(self, "tcp_panel"):
             self.tcp_panel.set_geom_dh(self.GEOM_DH)
         return True, "DH parameters saved to profile and reloaded."
+
+    def _apply_profile_runtime_flags(self, log_note=True):
+        self.profile_has_endstops = _profile_has_endstops(self.profile_name, self.profile_data)
+        is_custom_attr = getattr(self.client, "is_custom", True)
+        is_custom = bool(is_custom_attr() if callable(is_custom_attr) else is_custom_attr)
+        axis_home_attr = getattr(self.client, "supports_axis_homing", False)
+        can_axis_home = bool(axis_home_attr() if callable(axis_home_attr) else axis_home_attr)
+        can_global_home = not is_custom
+        for btn in getattr(self, "_homing_global_buttons", []):
+            try:
+                btn.configure(state=("normal" if can_global_home else "disabled"))
+            except Exception:
+                pass
+        for btn in getattr(self, "_homing_axis_buttons", []):
+            try:
+                btn.configure(state=("normal" if can_axis_home else "disabled"))
+            except Exception:
+                pass
+        if log_note and hasattr(self, "log") and not self.profile_has_endstops:
+            self.log("Profile without endstops: run 'Zero (G92)' after manual zeroing.")
+
+    def _send_vis_robot_profile(self):
+        if not UDP_MIRROR or not getattr(self.client, "udp_sock", None):
+            return
+        try:
+            dh_model = self.get_profile_section("dh_model", default={})
+            geom = tcp_pose_module.derive_visualizer_geometry_mm(dh_model if isinstance(dh_model, dict) else None)
+            limits_deg = {}
+            dh_rows = []
+            post_transform = {}
+            if isinstance(dh_model, dict):
+                joints_by_axis = {}
+                for j in dh_model.get("joints", []):
+                    ax = str(j.get("axis", "")).strip().upper()
+                    if not ax:
+                        continue
+                    joints_by_axis[ax] = j
+                    q_min = j.get("q_min")
+                    q_max = j.get("q_max")
+                    if q_min is None or q_max is None:
+                        continue
+                    try:
+                        limits_deg[ax] = [math.degrees(float(q_min)), math.degrees(float(q_max))]
+                    except Exception:
+                        continue
+
+                src_order = dh_model.get("joint_order", [])
+                order = []
+                seen = set()
+                if isinstance(src_order, list):
+                    for raw_ax in src_order:
+                        ax = str(raw_ax).strip().upper()
+                        if not ax or ax in seen:
+                            continue
+                        order.append(ax)
+                        seen.add(ax)
+                for raw_ax in joints_by_axis.keys():
+                    ax = str(raw_ax).strip().upper()
+                    if not ax or ax in seen:
+                        continue
+                    order.append(ax)
+                    seen.add(ax)
+
+                for ax in order:
+                    j = joints_by_axis.get(ax)
+                    if not isinstance(j, dict):
+                        continue
+                    try:
+                        dh_rows.append(
+                            {
+                                "axis": ax,
+                                "alpha_deg": float(math.degrees(float(j.get("alpha", 0.0)))),
+                                "a_mm": float(j.get("a", 0.0)) * 1000.0,
+                                "d_mm": float(j.get("d", 0.0)) * 1000.0,
+                                "theta_offset_deg": float(math.degrees(float(j.get("theta_offset", 0.0)))),
+                            }
+                        )
+                    except Exception:
+                        continue
+
+                raw_post = dh_model.get("post_transform", {})
+                if isinstance(raw_post, dict):
+                    sim_theta_offset_deg = {}
+                    raw_sim = raw_post.get("sim_theta_offset_deg", {})
+                    if isinstance(raw_sim, dict):
+                        for raw_ax, raw_val in raw_sim.items():
+                            ax = str(raw_ax).strip().upper()
+                            if not ax:
+                                continue
+                            try:
+                                sim_theta_offset_deg[ax] = float(raw_val)
+                            except Exception:
+                                continue
+                    sim_theta_scale = {}
+                    raw_scale = raw_post.get("sim_theta_scale", {})
+                    if isinstance(raw_scale, dict):
+                        for raw_ax, raw_val in raw_scale.items():
+                            ax = str(raw_ax).strip().upper()
+                            if not ax:
+                                continue
+                            try:
+                                sim_theta_scale[ax] = float(raw_val)
+                            except Exception:
+                                continue
+                    post_transform = {
+                        "mirror_x": bool(raw_post.get("mirror_x", False)),
+                        "sim_theta_offset_deg": sim_theta_offset_deg,
+                        "sim_theta_scale": sim_theta_scale,
+                    }
+            msg = {
+                "type": "robot_profile",
+                "profile": self.profile_name,
+                "has_endstops": bool(self.profile_has_endstops),
+                "joint_order": list(geom.get("joint_order", [])),
+                "geometry_mm": {
+                    "base_height_mm": float(geom.get("base_height_mm", 240.0)),
+                    "L1_mm": float(geom.get("L1_mm", 230.0)),
+                    "L2_mm": float(geom.get("L2_mm", 250.0)),
+                    "L_tool_mm": float(geom.get("L_tool_mm", 180.0)),
+                },
+                "dh_rows": dh_rows,
+                "post_transform": post_transform,
+                "limits_deg": limits_deg,
+            }
+            self.client.udp_sock.sendto((json.dumps(msg) + "\n").encode("utf-8"), UDP_ADDR)
+        except Exception:
+            pass
 
     def _default_endstop_limits(self):
         out = {}
@@ -3706,24 +4122,24 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             self.client.send_line(g)
             self.log("TX: " + g)
         except Exception as e:
-            self.log("Sendefehler: " + str(e))
+            self.log("Send error: " + str(e))
 
     def insert_delay(self):
-        """Fragt eine Wartezeit ab und fügt G4 P<time> in die Queue ein."""
+        """Ask for a delay and insert G4 P<time> into the queue."""
         try:
-            t = tk.simpledialog.askfloat("Insert Delay", "Wartezeit in Sekunden:", minvalue=0.0, maxvalue=3600.0)
+            t = tk.simpledialog.askfloat("Insert Delay", "Delay in seconds:", minvalue=0.0, maxvalue=3600.0)
             if t is None:
                 return
-            g = f"G4 P{t:.3f} ; Pause {t:.3f}s"
+            g = f"G4 P{t:.3f} ; Delay {t:.3f}s"
             self.enqueue(g)
-            self.log(f"⏱ Delay {t:.3f}s → Queue eingefügt")
+            self.log(f" Delay {t:.3f}s -> added to queue")
         except Exception as e:
-            self.log(f"Delay-Fehler: {e}")
+            self.log(f"Delay error: {e}")
 
     # ---------- CLI ----------
     def _parse_cli(self):
         txt = self.entry_cmd.get().strip()
-        if not txt: raise ValueError("Eingabe leer.")
+        if not txt: raise ValueError("Empty input.")
         return [ln.strip() for ln in txt.splitlines() if ln.strip()]
 
     def _init_cli_history(self):
@@ -3744,9 +4160,9 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         self._add_to_history(cmd)
         try:
             self.client.send_line(cmd)
-            self.log(f"TX (CLI ⏎): {cmd}")
+            self.log(f"TX (CLI ): {cmd}")
         except Exception as e:
-            self.log(f"Sendefehler: {e}")
+            self.log(f"Send error: {e}")
         self.entry_cmd.delete(0, tk.END)
         return "break"
 
@@ -3772,9 +4188,9 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         try:
             lines = self._parse_cli()
             for ln in lines: self.enqueue(ln); self._add_to_history(ln)
-            self.log(f"CLI: {len(lines)} zur Queue hinzugefügt.")
+            self.log(f"CLI: added {len(lines)} line(s) to queue.")
         except Exception as e:
-            messagebox.showerror("CLI-Fehler", str(e))
+            messagebox.showerror("CLI Error", str(e))
 
     def cli_send_now(self):
         try:
@@ -3782,18 +4198,23 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             sent = 0
             for ln in lines:
                 try:
-                    if self._handle_tcp_gcode(ln, source="CLI"):
+                    s = (ln or "").strip()
+                    s = s.split(";", 1)[0].strip()
+                    s = re.sub(r"\(.*(TM)\)", "", s).strip()
+                    if not s:
+                        continue
+                    if self._handle_tcp_gcode(s, source="CLI"):
                         self._add_to_history(ln)
                         sent += 1
                         continue
-                    self.client.send_line(ln); self._add_to_history(ln)
-                    self.log("TX (CLI): " + ln)
+                    self.client.send_line(s); self._add_to_history(ln)
+                    self.log("TX (CLI): " + s)
                     sent += 1
                 except Exception as e:
                     self.log("Send Error: " + str(e))
-            messagebox.showinfo("Send Now", f"{sent}/{len(lines)} gesendet.")
+            messagebox.showinfo("Send Now", f"Sent {sent}/{len(lines)} line(s).")
         except Exception as e:
-            messagebox.showerror("CLI-Fehler", str(e))
+            messagebox.showerror("CLI Error", str(e))
 
 
     def _handle_tcp_gcode(self, line: str, source: str = "CLI") -> bool:
@@ -3804,7 +4225,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             return False
         # Strip comments
         s = s.split(";", 1)[0]
-        s = re.sub(r"\(.*?\)", "", s)
+        s = re.sub(r"\(.*(TM)\)", "", s)
         u = s.upper()
 
         if "G90" in u:
@@ -3820,7 +4241,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             return False
 
         vals = {}
-        for m in re.finditer(r"([XYZF])\s*([-+]?[0-9]*\.?[0-9]+)", u):
+        for m in re.finditer(r"([XYZF])\s*([-+](TM)[0-9]*\.(TM)[0-9]+)", u):
             vals[m.group(1)] = float(m.group(2))
 
         if not any(k in vals for k in ("X", "Y", "Z")):
@@ -3939,7 +4360,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
 
     def save_program(self):
         if not self.program:
-            messagebox.showinfo("Save Queue", "Queue ist leer."); return
+            messagebox.showinfo("Save Queue", "Queue is empty."); return
         path = filedialog.asksaveasfilename(defaultextension=".gcode", filetypes=[("GCode", "*.gcode"), ("Text", "*.txt")])
         if not path: return
         try:
@@ -4021,7 +4442,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         self._drag_index = None
 
     def clamp_with_limits(self, ax, v):
-        """Begrenzt eine Zielposition auf definierte Achsenlimits."""
+        """Clamp a target position to configured axis limits."""
         try:
             val = float(v)
         except Exception:
@@ -4034,7 +4455,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
     # ============================================================
 
     def axis_to_queue(self, ax: str, val: float):
-        """Achse mit Wert als G1-Befehl in Queue einfügen."""
+        """Insert one axis move as a G1 command into the queue."""
         try:
             val = float(val)
             g = f"G1 {ax}{val:.3f} F{map_speed(int(self.speed_val.get()))}"
@@ -4044,7 +4465,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             self.log(f"[ToQ ERROR] {e}")
 
     def axis_to_cli(self, ax: str, val: float):
-        """Achsenbewegung in CLI-Feld schreiben."""
+        """Write axis move into CLI field."""
         try:
             val = float(val)
             g = f"G1 {ax}{val:.3f} F{map_speed(int(self.speed_val.get()))}"
@@ -4055,7 +4476,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             self.log(f"[ToCLI ERROR] {e}")
 
     def axis_direct_send(self, ax: str, val: float):
-        """Direkt G1 senden (ohne Queue)."""
+        """Send G1 directly (without queue)."""
         try:
             val = float(val)
             f = map_speed(int(self.speed_val.get()))
@@ -4075,8 +4496,9 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         except Exception as e:
             self.log(f"[Send ERROR] {e}")
 
-    def do_zero(self):
+    def do_zero(self, persist_reference=False, source="zero"):
         try:
+            pre_pose = {ax: float(self.axis_positions.get(ax, 0.0)) for ax in AXES}
             self.client.send_line("G92 X0 Y0 Z0 A0 B0 C0")
             for ax in AXES:
                 self.axis_positions[ax] = 0.0
@@ -4087,9 +4509,24 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                     ent.delete(0, tk.END)
                     ent.insert(0, "0.000")
             self.update_position_display()
-            self.log("Zero All (G92)")
+            if persist_reference:
+                payload = {
+                    "source": str(source),
+                    "profile": self.profile_name,
+                    "pre_g92_machine_pose": pre_pose,
+                    "timestamp": time.time(),
+                }
+                self.set_profile_section("manual_zero_reference", payload, save=True)
+                self.log("Zero reference saved + G92 applied.")
+            else:
+                self.log("Zero All (G92)")
+            return True
         except Exception as e:
-            self.log("Zero-Fehler: " + str(e))
+            self.log("Zero error: " + str(e))
+            return False
+
+    def manual_zero_current_pose(self):
+        return self.do_zero(persist_reference=True, source="manual_zero")
 
     def goto_home(self):
         try:
@@ -4097,7 +4534,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             f = map_speed(int(self.speed_val.get()))
             a = map_speed(int(self.accel_val.get()))
 
-            # ---- Nur für GOTO HOME limitieren ----
+            # ---- Limit only for GOTO HOME ----
             f_home = min(f, MAX_HOME_FEED)
 
             self.client.send_line("$X"); time.sleep(0.02)   # entsperren
@@ -4109,13 +4546,13 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             self.log(f"TX: {g} (Goto Home, F_user={f}, F_home={f_home}, A={a})")
 
         except Exception as e:
-            self.log("Goto-Home-Fehler: " + str(e))
+            self.log("Goto-home error: " + str(e))
 
     def enqueue_home(self):
         f = map_speed(int(self.speed_val.get()))
         g = f"G90 G1 X0 Y0 Z0 A0 B0 C0 F{f}"
         self.enqueue(g)
-        self.log("↩ To Home → Queue hinzugefügt")
+        self.log(" To Home -> added to queue")
 
     def enqueue_axis(self, ax: str, val: float):
         g = self._make_move_line({ax: val})
@@ -4135,7 +4572,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         self.log("To Queue: " + g)
 
     # ============================================================
-    # POSE → QUEUE (für Gamepad & Button "🚀 To Queue")
+    # POSE -> QUEUE (for gamepad & button " To Queue")
     # ============================================================
     def add_current_pose_to_queue(self):
         """
@@ -4194,17 +4631,17 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             self.client.send_line(g)
             self.log("TX (Set All Now): " + g)
         except Exception as e:
-            self.log("Sendefehler Set All Now: " + str(e))
+            self.log("Send error Set All Now: " + str(e))
 
     # ---------- Worker / Steuerung ----------
     def start_run(self):
         if not self.program:
-            self.log("⚠️ Queue ist leer.")
+            self.log("   Queue is empty.")
             return
         self.abort_event.clear()
         self.paused = False
         self.repeat_count.set(0)
-        self.log("▶ RUN gestartet")
+        self.log(" RUN started")
         self.run_event.set()
 
     def pause_run(self):
@@ -4212,46 +4649,46 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         try:
             self.client.send_line("!")
             self.paused = True
-            self.log("⏸ Pause (Feed Hold gesendet)")
+            self.log("  Paused (Feed Hold sent)")
         except Exception as e:
-            self.log(f"Pause-Fehler: {e}")
+            self.log(f"Pause error: {e}")
 
     def resume_run(self):
         """Setzt pausierte Bewegung fort."""
         if not self.paused:
-            self.log("ℹ️ Keine Pause aktiv.")
+            self.log("1  No active pause.")
             return
         try:
             self.client.send_line("~")
             self.paused = False
-            self.log("▶ Resume (~) gesendet")
+            self.log(" Resume (~) sent")
         except Exception as e:
-            self.log(f"Resume-Fehler: {e}")
+            self.log(f"Resume error: {e}")
 
     def stop_abort(self):
-        """Komplettabbruch: Queue stoppen + Events zurücksetzen und Steuerung sofort freigeben."""
-        self.log("⛔ STOP/ABBRUCH gedrückt")
+        """Full abort: stop queue, reset events, and release control immediately."""
+        self.log(" STOP/ABORT pressed")
         self.abort_event.set()
         self.run_event.clear()
         self.paused = False
         self._awaiting_ack = False
         try:
-            self.client.send_ctrl_x()  # Hard reset ist hier gewollt
-            self.log("🛑 Ctrl-X (Reset) gesendet")
+            self.client.send_ctrl_x()  # hard reset is intentional here
+            self.log(" Ctrl-X (reset) sent")
         except Exception as e:
-            self.log(f"Abbruch-Fehler: {e}")
-        self.log("✅ System bereit für neue Befehle")
+            self.log(f"Abort error: {e}")
+        self.log("... System ready for new commands")
 
-    # Alias für Gamepad-Shortcut (Kompatibilität)
+    # Alias for gamepad shortcut (compatibility)
     def emergency_stop(self):
-        """Alias für Stop, damit Gamepad-Aufruf kompatibel bleibt."""
+        """Stop alias for gamepad compatibility."""
         self.stop_abort()
 
 
 
 
     def worker(self):
-        """Hintergrundthread für Queue-Ausführung."""
+        """Background thread for queue execution."""
         while True:
             self.run_event.wait()
             if self.abort_event.is_set():
@@ -4262,11 +4699,11 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 continue
 
             lines = list(self.program)
-            self.log(f"▶ Starte Programmausführung ({len(lines)} Zeilen)")
+            self.log(f" Starting program execution ({len(lines)} line(s))")
             self._awaiting_ack = False
 
             for i, g in enumerate(lines, start=1):
-                # Pause/Abbruch prüfen
+                # check pause/abort
                 while self.paused and not self.abort_event.is_set():
                     time.sleep(0.05)
                 if self.abort_event.is_set() or not self.run_event.is_set():
@@ -4289,7 +4726,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 try:
                     self.client.send_line(g)
                 except Exception as e:
-                    self.log(f"❌ TX-Fehler: {e}")
+                    self.log(f" TX error: {e}")
                     self._awaiting_ack = False
                     continue
 
@@ -4302,14 +4739,14 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                         break
                     time.sleep(0.02)
                 else:
-                    self.log(f"⚠️ Timeout bei: {g}")
+                    self.log(f"   Timeout on: {g}")
                     self._awaiting_ack = False
 
                 self.current_cmd = None
 
-            # Ende/Abbruch/Repeat
+            # End/abort/repeat
             if self.abort_event.is_set():
-                self.log("❌ Programmausführung abgebrochen")
+                self.log(" Program execution aborted")
                 self.abort_event.clear()
                 self.run_event.clear()
                 self.paused = False
@@ -4321,23 +4758,23 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 total = max(1, self.repeat_times.get())
 
                 if self.repeat_count.get() < total:
-                    self.log(f"🔁 Wiederhole Queue ({self.repeat_count.get()}/{total})")
+                    self.log(f" Repeating queue ({self.repeat_count.get()}/{total})")
                     continue
                 else:
-                    self.log(f"✅ Repeat abgeschlossen ({self.repeat_count.get()}/{total})")
+                    self.log(f"... Repeat finished ({self.repeat_count.get()}/{total})")
 
 
             self.run_event.clear()
             self.paused = False
             self._awaiting_ack = False
-            self.log("✅ Queue finished – bereit für neuen Start")
+            self.log("... Queue finished - ready for next start")
 
     def _update_status_block(self, state: str):
-        """Färbt und beschriftet den Status-Block basierend auf dem Maschinenzustand."""
-        st = (state or "—").lower()
+        """Update the status block color/text based on machine state."""
+        st = (state or "-").lower()
         color = "#777777"   # neutral
         if "idle" in st:
-            color = "#2e7d32"   # grün
+            color = "#2e7d32"   # green
         elif "run" in st:
             color = "#1565c0"   # blau
         elif "hold" in st:
@@ -4345,12 +4782,12 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
         elif "alarm" in st or "error" in st:
             color = "#b71c1c"   # rot
         elif "home" in st:
-            color = "#00897b"   # türkis
+            color = "#00897b"   # turquoise
         elif "disconnect" in st:
             color = "#616161"   # grau
 
         self.status_block_var.set(f"Status: {state}")
-        # tk.Label (nicht ttk) → bg funktioniert sicher
+        # tk.Label (not ttk) -> bg works reliably
         self.lbl_status_block.configure(bg=color, fg=("black" if color == "#f9a825" else "white"))
 
 
@@ -4366,7 +4803,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             return
 
 
-        # $$ softlimit parser (geht für FluidNC und GRBL)
+        # $$ soft-limit parser (works for FluidNC and GRBL)
         for ax, rx in SOFTMAX_RE.items():
             m = rx.match(line)
             if m:
@@ -4380,7 +4817,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
 
 
         # =========================================================
-        # 📡 Gemeinsamer Status-Parser für FluidNC & GRBL
+        #  Shared status parser for FluidNC & GRBL
         # Format typischerweise:
         #   <Idle|MPos:0.000,0.000,0.000|FS:0,0|Pn:X>
         #   <Run|MPos:...|FS:...>
@@ -4417,11 +4854,11 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                             except ValueError:
                                 pass
 
-                elif part.startswith("Pn:") and self.client.supports_endstops:
+                elif part.startswith("Pn:") and self.client.supports_endstops and self.profile_has_endstops:
                     endstop_active = set(part[3:])
 
-            # --- Endstops nur bei FluidNC sinnvoll ---
-            if self.client.supports_endstops and endstop_active is not None:
+            # --- Endstops are meaningful only with FluidNC ---
+            if self.client.supports_endstops and self.profile_has_endstops and endstop_active is not None:
                 for ax in AXES:
                     if ax in self.axis_endstop_icons:
                         c, oval, state_old = self.axis_endstop_icons[ax]
@@ -4456,7 +4893,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             if updated:
                 self.update_position_display()
 
-            # Status für andere Teile merken
+            # keep status for other parts
             self.client.last_status = {"state": state, "MPos": mpos, "WPos": wpos}
 
             # --- UDP abs-Positionsbroadcast ---
@@ -4467,7 +4904,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                     # Basis: das, was vom Controller kam
                     full_pose = dict(abs_pose)
 
-                    # Fehlende Achsen mit letzter bekannter GUI-Position auffüllen
+                    # fill missing axes with last known GUI position
                     for ax in AXES:
                         if ax not in full_pose and ax in self.axis_positions:
                             full_pose[ax] = float(self.axis_positions[ax])
@@ -4496,10 +4933,10 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 self.log("RX: " + line)
     # ---------- $$ Parser ----------
     def request_and_parse_settings(self):
-        """Sendet '$$' und parst die Rückgaben (Softlimits etc.)."""
-        self.log("TX: $$ (Settings abfragen)")
+        """Send '$$' and parse the responses (soft limits, etc.)."""
+        self.log("TX: $$ (request settings)")
         try:
-            # Alte HW-Limits-Anzeige löschen
+            # clear old HW limits display
             for ax in self.hw_limits:
                 self.axis_limit_labels[ax].configure(text="")
             self.hw_limits.clear()
@@ -4507,7 +4944,7 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             # Anfrage senden
             self.client.send_line("$$")
         except Exception as e:
-            self.log("$$-Fehler: " + str(e))
+            self.log("$$ error: " + str(e))
 
 
     def update_position_display(self):
@@ -4516,40 +4953,40 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
 
 
     # ============================================================
-    # GAMEPAD → ExecuteApp Dispatcher
-    # (wird von gamepad_block_v3_x aufgerufen)
+    # GAMEPAD  ExecuteApp Dispatcher
+    # (called from gamepad_block_v3_x)
     # ============================================================
     def on_gamepad_trigger(self, name, payload):
         """
-        Zentraler Dispatcher für Gamepad-Aktionen.
-        'name' ist ein String wie 'tcp_add_pose_to_queue',
-        'payload' ein optionales Dict (derzeit kaum genutzt).
+        Central dispatcher for gamepad actions.
+        'name' is a string like 'tcp_add_pose_to_queue',
+        'payload' is an optional dict.
         """
         try:
-            self.log(f"[GAMEPAD] Trigger → {name}  payload={payload}")
+            self.log(f"[GAMEPAD] Trigger  {name}  payload={payload}")
         except Exception:
-            print(f"[GAMEPAD] Trigger → {name}  payload={payload}")
+            print(f"[GAMEPAD] Trigger  {name}  payload={payload}")
 
         # ---------------------------------------------------------
-        # 1) aktuelle Pose zur Queue hinzufügen
+        # 1) add current pose to queue
         # ---------------------------------------------------------
         if name == "tcp_add_pose_to_queue":
             if hasattr(self, "add_current_pose_to_queue"):
                 return self.add_current_pose_to_queue()
-            self.log("⚠️ METHODE fehlt: add_current_pose_to_queue()")
+            self.log("   Missing method: add_current_pose_to_queue()")
             return
 
         # ---------------------------------------------------------
         # 2) Preview der TCP-Sequenz
         # ---------------------------------------------------------
         elif name == "tcp_seq_preview":
-            # 1) Kinematics Tabs prüfen
+            # 1) check kinematics tabs
             if hasattr(self, "kinematics_tabs"):
                 for attr in (
                     "gamepad_preview_sequence",
                     "preview_sequence",
                     "preview_tcp_sequence",
-                    "seq_preview",     # häufig
+                    "seq_preview",     # common name
                     "preview",         # fallback
                 ):
                     if hasattr(self.kinematics_tabs, attr):
@@ -4559,11 +4996,11 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             if hasattr(self, "seq_preview"):
                 return self.seq_preview()
 
-            self.log("⚠️ Keine Preview-Funktion (weder in kinematics_tabs noch ExecuteApp).")
+            self.log("   No preview function found (neither in kinematics_tabs nor ExecuteApp).")
             return
 
         # ---------------------------------------------------------
-        # 3) Sequenz ausführen
+        # 3) execute sequence
         # ---------------------------------------------------------
         elif name == "tcp_seq_execute_cli":
             if hasattr(self, "kinematics_tabs"):
@@ -4573,29 +5010,29 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
             # Fallback: komplette Queue abfahren
             if hasattr(self, "start_run"):
                 return self.start_run()
-            self.log("⚠️ Keine Execute-Funktion für TCP-Sequenz gefunden.")
+            self.log("   No execute function found for TCP sequence.")
             return
 
         # ---------------------------------------------------------
-        # 4) TCP als IK-Referenz setzen
+        # 4) set TCP as IK reference
         # ---------------------------------------------------------
         elif name == "tcp_set_tcp_as_reference":
             if hasattr(self, "kinematics_tabs"):
                 for attr in ("set_tcp_as_reference", "use_current_tcp_as_ref"):
                     if hasattr(self.kinematics_tabs, attr):
                         return getattr(self.kinematics_tabs, attr)()
-            self.log("⚠️ Keine Funktion zum Setzen der TCP-Referenz gefunden.")
+            self.log("   No function found to set TCP reference.")
             return
 
         # ---------------------------------------------------------
-        # 4b) TCP -> Maske, Generate (ohne Execute)
+        # 4b) TCP -> mask, Generate (without Execute)
         # ---------------------------------------------------------
         elif name == "tcp_pose_to_mask_and_generate":
             if hasattr(self, "kinematics_tabs"):
                 for attr in ("pose_to_mask_and_generate", "generate_from_current_pose"):
                     if hasattr(self.kinematics_tabs, attr):
                         return getattr(self.kinematics_tabs, attr)()
-            self.log("⚠️ Keine Generate-Funktion für TCP gefunden.")
+            self.log("   No generate function found for TCP.")
             return
 
         # ---------------------------------------------------------
@@ -4606,21 +5043,21 @@ $Report/Startup     - Zeigt, welche Datei beim Start geladen wurde
                 for attr in ("solve_and_execute_sequence", "solve_and_run_tcp_sequence"):
                     if hasattr(self.kinematics_tabs, attr):
                         return getattr(self.kinematics_tabs, attr)()
-            self.log("⚠️ Keine Solve-&-Run-Funktion in kinematics_tabs gefunden.")
+            self.log("   No solve-and-run function found in kinematics_tabs.")
             return
 
         # ---------------------------------------------------------
         # 6) Unbekannt
         # ---------------------------------------------------------
         else:
-            self.log(f"⚠️ Unbekannter Gamepad-Trigger: {name}")
+            self.log(f"   Unknown gamepad trigger: {name}")
             return
 
 
 
     def _tick_status_poll(self):
         if self.poll_positions.get():
-            try: self.client.send_line("?")
+            try: self.client.send_line("(TM)")
             except Exception as e:
                 print("[Warn]", e)
         cur = (self.status_block_var.get() or "")

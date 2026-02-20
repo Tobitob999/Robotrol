@@ -18,13 +18,12 @@ from tcp_pose_module_v3 import (
     get_dh_rows_mm_deg,
     get_dh_axes,
     get_post_transform,
+    apply_joint_angle_post_transform,
     reload_dh_model,
 )
 
 # We reuse the same axis naming convention (joint letters):
 AXES = ["A", "X", "Y", "B", "Z", "C"]
-# DH joint order for Moveo (j1..j6)
-DH_AXES = get_dh_axes()
 
 
 # =============================================================
@@ -88,9 +87,9 @@ class IK6:
 class TcpKinematicsFrame(ttk.Frame):
     """
     Main UI tab:
-      • Uses TCP pose inputs (mask) in mm / deg
-      • "Pose → Maske" übernimmt live TCP vom ExecuteApp
-      • User defines:
+       Uses TCP pose inputs (mask) in mm / deg
+       "Pose -> Mask" copies live TCP from ExecuteApp
+       User defines:
            - Retreat (D_ret)
            - Work depth (D_work)
            - Feed
@@ -100,9 +99,9 @@ class TcpKinematicsFrame(ttk.Frame):
            - Invert tool direction
            - Gripper with pauses before/after
            - Optional pre/post G-Code
-      • Generates a RET → TAR → RET sequence in joint space
-      • Uses IK6 to obtain joints for each position
-      • Full G-code preview with limit highlight
+       Generates a RET  TAR  RET sequence in joint space
+       Uses IK6 to obtain joints for each position
+       Full G-code preview with limit highlight
     """
 
     def __init__(self, master, execute_app, client):
@@ -127,7 +126,9 @@ class TcpKinematicsFrame(ttk.Frame):
         self.roll_override = tk.DoubleVar(value=0.0)    # Roll (deg)
 
         # Anchor mode: zero / target / retreat
-        self.anchor_mode = tk.StringVar(value="zero")
+        # Default "retreat" avoids an unnecessary first positioning move when
+        # the current TCP is copied into the mask and then executed directly.
+        self.anchor_mode = tk.StringVar(value="retreat")
 
         self.invert_u = tk.BooleanVar(value=False)
 
@@ -140,7 +141,7 @@ class TcpKinematicsFrame(ttk.Frame):
         # Pre/Post-GCode
         self.use_prepost = tk.BooleanVar(value=False)
 
-        # TCP pose inputs (X,Y,Z,Roll,Pitch,Yaw) as StringVar (für Formatierung)
+        # TCP pose inputs (X,Y,Z,Roll,Pitch,Yaw) as StringVar (for formatting)
         self.tcp_x = tk.StringVar(value="0.00")
         self.tcp_y = tk.StringVar(value="0.00")
         self.tcp_z = tk.StringVar(value="0.00")
@@ -159,7 +160,7 @@ class TcpKinematicsFrame(ttk.Frame):
         self.rowconfigure(1, weight=1)
 
         # =========================================================
-        # 🔲 4-SPALTEN LAYOUT – OBERER BEREICH
+        #  4-SPALTEN LAYOUT  OBERER BEREICH
         # =========================================================
         top = ttk.Frame(self)
         top.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
@@ -169,7 +170,7 @@ class TcpKinematicsFrame(ttk.Frame):
         top.columnconfigure(3, weight=1)
 
         # =========================================================
-        # 🟥 SPALTE 1 – TCP POSE INPUT MASKE
+        #  SPALTE 1  TCP POSE INPUT MASKE
         # =========================================================
         col_pose = ttk.LabelFrame(top, text="TCP Pose Input (mm / deg)")
         col_pose.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
@@ -192,15 +193,15 @@ class TcpKinematicsFrame(ttk.Frame):
 
         # --- TCP -> Maske (Weltkoordinaten) + optional Solve&Execute ---
 
-        def _fmt2(v):
+        def _fmt4(v):
             try:
-                return f"{float(v):.2f}"
+                return f"{float(v):.4f}"
             except Exception:
-                return "0.00"
+                return "0.0000"
 
         def _pose_to_mask_only():
             """
-            (1) Nur TCP Pose -> Maske übertragen (Weltkoordinaten / mm+deg)
+            (1) Transfer only TCP pose -> mask (world coordinates / mm+deg)
             """
             try:
                 tcp = self.exec.get_current_tcp_mm()
@@ -209,22 +210,22 @@ class TcpKinematicsFrame(ttk.Frame):
             if not tcp:
                 return False
 
-            self.tcp_x.set(_fmt2(tcp.get("X_mm", 0.0)))
-            self.tcp_y.set(_fmt2(tcp.get("Y_mm", 0.0)))
-            self.tcp_z.set(_fmt2(tcp.get("Z_mm", 0.0)))
+            self.tcp_x.set(_fmt4(tcp.get("X_mm", 0.0)))
+            self.tcp_y.set(_fmt4(tcp.get("Y_mm", 0.0)))
+            self.tcp_z.set(_fmt4(tcp.get("Z_mm", 0.0)))
 
             roll_deg = tcp.get("Roll_deg", 0.0)
             pitch_deg = tcp.get("Pitch_deg", tcp.get("Tilt_deg", 0.0))
             yaw_deg = tcp.get("Yaw_deg", 0.0)
 
-            self.tcp_roll.set(_fmt2(roll_deg))
-            self.tcp_pitch.set(_fmt2(pitch_deg))
-            self.tcp_yaw.set(_fmt2(yaw_deg))
+            self.tcp_roll.set(_fmt4(roll_deg))
+            self.tcp_pitch.set(_fmt4(pitch_deg))
+            self.tcp_yaw.set(_fmt4(yaw_deg))
             return True
 
         def _pose_to_mask_and_solve_execute():
             """
-            (2) TCP Pose -> Maske übertragen, Sequenz lösen (Generate) und sofort ausführen
+            (2) Transfer TCP pose -> mask, solve sequence (Generate), and execute immediately
             """
             ok = _pose_to_mask_only()
             if not ok:
@@ -232,13 +233,13 @@ class TcpKinematicsFrame(ttk.Frame):
             # Sequenz generieren (IK solve)
             if hasattr(self, "_run"):
                 self._run()
-            # direkt ausführen
+            # execute immediately
             if hasattr(self, "_execute_direct"):
                 self._execute_direct()
 
         def _pose_to_mask_and_generate():
             """
-            (3) TCP Pose -> Maske übertragen, Sequenz lösen (Generate) ohne Ausführung
+            (3) Transfer TCP pose -> mask, solve sequence (Generate) without execution
             """
             ok = _pose_to_mask_only()
             if not ok:
@@ -246,21 +247,21 @@ class TcpKinematicsFrame(ttk.Frame):
             if hasattr(self, "_run"):
                 self._run()
 
-        # Button: nur übertragen (dein normaler GUI-Button)
+        # Button: transfer only (your normal GUI button)
         ttk.Button(
             col_pose,
-            text="◀ Pose → Maske",
+            text=" Pose  Maske",
             command=_pose_to_mask_only,
         ).grid(row=len(pose_fields), column=0, columnspan=2, pady=6)
 
-        # Die beiden Funktionen als "öffentliche" Methoden verfügbar machen (für Gamepad-Proxies)
+        # Expose both functions as public methods (for gamepad proxies)
         self.pose_to_mask_only = _pose_to_mask_only
         self.pose_to_mask_and_solve_execute = _pose_to_mask_and_solve_execute
         self.pose_to_mask_and_generate = _pose_to_mask_and_generate
 
 
         # =========================================================
-        # 🟦 SPALTE 2 – PARAMETER & ANCHOR
+        #  SPALTE 2  PARAMETER & ANCHOR
         # =========================================================
         col_params = ttk.LabelFrame(top, text="Parameters")
         col_params.grid(row=0, column=1, sticky="nsew", padx=4, pady=4)
@@ -288,7 +289,7 @@ class TcpKinematicsFrame(ttk.Frame):
         ).grid(row=len(params), column=0, columnspan=2, sticky="w", padx=4, pady=4)
 
         # Anchor-Auswahl
-        anchor_frame = ttk.LabelFrame(col_params, text="Anchor (Maske ist ...)")
+        anchor_frame = ttk.LabelFrame(col_params, text="Anchor (mask is ...)")
         anchor_frame.grid(
             row=len(params) + 1,
             column=0,
@@ -309,7 +310,7 @@ class TcpKinematicsFrame(ttk.Frame):
         ).pack(side=tk.LEFT, padx=3)
 
         # =========================================================
-        # 🟩 SPALTE 3 – GRIPPER / SEQUENZ-OPTIONEN
+        #  SPALTE 3  GRIPPER / SEQUENZ-OPTIONEN
         # =========================================================
         col_grip = ttk.LabelFrame(top, text="Gripper / Sequence")
         col_grip.grid(row=0, column=2, sticky="nsew", padx=4, pady=4)
@@ -348,7 +349,7 @@ class TcpKinematicsFrame(ttk.Frame):
         ).grid(row=3, column=1, sticky="w", padx=4, pady=2)
 
         # =========================================================
-        # 🧮 SPALTE 4 – DH PARAMETERS (Moveo)
+        #  SPALTE 4  DH PARAMETERS (Moveo)
         # =========================================================
         col_dh = ttk.LabelFrame(top, text="DH Parameters (deg / mm)")
         col_dh.grid(row=0, column=3, sticky="nsew", padx=4, pady=4)
@@ -358,7 +359,7 @@ class TcpKinematicsFrame(ttk.Frame):
             ttk.Label(col_dh, text=lbl).grid(row=0, column=j, padx=2, pady=1)
 
         dh_defaults = self._get_dh_defaults()
-        self._mirror_x = bool(get_post_transform().get("mirror_x"))
+        self._refresh_profile_post_transform()
 
         self.dh_vars = []
         for i, (alpha, a, d, theta_off) in enumerate(dh_defaults, start=1):
@@ -427,6 +428,17 @@ class TcpKinematicsFrame(ttk.Frame):
     # LOW-LEVEL HELPERS
     # =========================================================
 
+    def _refresh_profile_post_transform(self):
+        post = get_post_transform()
+        self._mirror_x = bool(post.get("mirror_x"))
+
+    @staticmethod
+    def _dh_axes():
+        axes = get_dh_axes()
+        if not axes:
+            return ["A", "X", "Y", "B", "Z", "C"]
+        return list(axes)
+
     def _get_dh_defaults(self):
         # Defaults from active DH model (deg / mm)
         dh_rows = get_dh_rows_mm_deg()
@@ -455,7 +467,7 @@ class TcpKinematicsFrame(ttk.Frame):
                 self.geom = self.exec.GEOM_DH
         except Exception:
             pass
-        self._mirror_x = bool(get_post_transform().get("mirror_x"))
+        self._refresh_profile_post_transform()
         dh_defaults = self._get_dh_defaults()
         for i, (alpha, a, d, theta_off) in enumerate(dh_defaults):
             if i >= len(self.dh_vars):
@@ -468,7 +480,7 @@ class TcpKinematicsFrame(ttk.Frame):
 
     def set_mask_from_current_pose(self):
         """
-        Gamepad/GUI: übernimmt die aktuelle TCP-Pose aus ExecuteApp.tcp_panel
+        Gamepad/GUI: copies current TCP pose from ExecuteApp.tcp_panel
         in die Eingabemaske.
         """
         try:
@@ -481,9 +493,9 @@ class TcpKinematicsFrame(ttk.Frame):
 
         def fmt(v):
             try:
-                return f"{float(v):.2f}"
+                return f"{float(v):.4f}"
             except Exception:
-                return "0.00"
+                return "0.0000"
 
         self.tcp_x.set(fmt(tcp.get("X_mm", 0.0)))
         self.tcp_y.set(fmt(tcp.get("Y_mm", 0.0)))
@@ -536,6 +548,7 @@ class TcpKinematicsFrame(ttk.Frame):
         """Read DH table (alpha, a, d, theta_offset) from UI; values are degrees/mm."""
         if not hasattr(self, "dh_vars"):
             raise ValueError("DH UI not initialized")
+        dh_axes = self._dh_axes()
         table = []
         for i, (v_alpha, v_a, v_d, v_t) in enumerate(self.dh_vars):
             try:
@@ -554,7 +567,7 @@ class TcpKinematicsFrame(ttk.Frame):
                 theta_offset = float(v_t.get().replace(",", "."))
             except Exception:
                 theta_offset = 0.0
-            axis = DH_AXES[i] if i < len(DH_AXES) else f"j{i+1}"
+            axis = dh_axes[i] if i < len(dh_axes) else f"j{i+1}"
             table.append(
                 {"axis": axis, "alpha": alpha, "a": a, "d": d, "theta_offset": theta_offset}
             )
@@ -676,15 +689,17 @@ class TcpKinematicsFrame(ttk.Frame):
     def _task_from_joints(self, joints):
         # Forward kinematics from DH table. Returns (pos, R).
         dh = self._read_dh_table()
+        dh_axes = self._dh_axes()
         T = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ]
-        for i, ax in enumerate(DH_AXES):
+        for i, ax in enumerate(dh_axes):
             row = dh[i]
-            th = float(joints[i]) + float(row.get("theta_offset", 0.0))
+            model_joint = apply_joint_angle_post_transform(ax, float(joints[i]))
+            th = model_joint + float(row.get("theta_offset", 0.0))
             Ti = self._dh_transform(th, row["alpha"], row["a"], row["d"])
             T = self._mat_mul(T, Ti)
         x, y, z = T[0][3], T[1][3], T[2][3]
@@ -755,8 +770,9 @@ class TcpKinematicsFrame(ttk.Frame):
     def _get_current_joint_list(self):
         """Current joint list in DH_AXES order using ExecuteApp axis_positions."""
         src = getattr(self.exec, "axis_positions", {}) or {}
+        dh_axes = self._dh_axes()
         joints = []
-        for ax in DH_AXES:
+        for ax in dh_axes:
             try:
                 joints.append(float(src.get(ax, 0.0)))
             except Exception:
@@ -777,8 +793,11 @@ class TcpKinematicsFrame(ttk.Frame):
 
         model["convention"] = "DH"
         model["units"] = {"length": "m", "angle": "rad"}
-        model["joint_order"] = list(DH_AXES)
-        model["post_transform"] = {"mirror_x": bool(self._mirror_x)}
+        model["joint_order"] = list(self._dh_axes())
+        raw_post = model.get("post_transform", {})
+        post_transform = dict(raw_post) if isinstance(raw_post, dict) else {}
+        post_transform["mirror_x"] = bool(self._mirror_x)
+        model["post_transform"] = post_transform
 
         existing = {}
         for j in model.get("joints", []):
@@ -820,8 +839,9 @@ class TcpKinematicsFrame(ttk.Frame):
         # Numerical Jacobian dX/dQ from DH FK
         base_pos, base_R = self._task_from_joints(joints)
         delta = 0.1  # deg
-        J = [[0.0] * 6 for _ in range(6)]
-        for j in range(6):
+        dof = len(joints)
+        J = [[0.0] * dof for _ in range(6)]
+        for j in range(dof):
             joints2 = list(joints)
             joints2[j] += delta
             pos2, R2 = self._task_from_joints(joints2)
@@ -908,8 +928,9 @@ class TcpKinematicsFrame(ttk.Frame):
                 for i in range(len(joints)):
                     joints[i] += d_joint[i] * scale
 
+            dh_axes = self._dh_axes()
             joints_map = {}
-            for i, ax in enumerate(DH_AXES):
+            for i, ax in enumerate(dh_axes):
                 joints_map[ax] = joints[i]
             if not self._check_limits(joints_map, lims):
                 if not allow_out_of_limits:
@@ -920,7 +941,7 @@ class TcpKinematicsFrame(ttk.Frame):
                     self.exec.log("TCP Move warning: limits exceeded (override).")
 
             F = float(feed) if feed is not None else float(self.feed.get())
-            g = "G90 G1 " + " ".join(f"{ax}{joints_map[ax]:.3f}" for ax in AXES) + f" F{F:.0f}"
+            g = "G90 G1 " + " ".join(f"{ax}{joints_map[ax]:.3f}" for ax in dh_axes) + f" F{F:.0f}"
             try:
                 self.client.send_line(g)
                 if hasattr(self.exec, "log"):
@@ -932,7 +953,7 @@ class TcpKinematicsFrame(ttk.Frame):
             for ax in AXES:
                 if ax in joints_map:
                     self.exec.axis_positions[ax] = float(joints_map[ax])
-            self._last_tcp_joints = [joints_map[ax] for ax in DH_AXES]
+            self._last_tcp_joints = [joints_map[ax] for ax in dh_axes]
             if hasattr(self.exec, "_append_vis_path_kin") and not getattr(self.exec, "_vis_skip_kin", False):
                 try:
                     self.exec._append_vis_path_kin((x, y, z))
@@ -999,13 +1020,14 @@ class TcpKinematicsFrame(ttk.Frame):
                 for i in range(len(joints)):
                     joints[i] += d_joint[i] * scale
 
+            dh_axes = self._dh_axes()
             joints_map = {}
-            for i, ax in enumerate(DH_AXES):
+            for i, ax in enumerate(dh_axes):
                 joints_map[ax] = joints[i]
             ok = self._check_limits(joints_map, lims)
 
             F = float(feed) if feed is not None else float(self.feed.get())
-            g = "G90 G1 " + " ".join(f"{ax}{joints_map[ax]:.3f}" for ax in AXES) + f" F{F:.0f}"
+            g = "G90 G1 " + " ".join(f"{ax}{joints_map[ax]:.3f}" for ax in dh_axes) + f" F{F:.0f}"
             return {"gcode": g, "limits": lims, "ok": ok, "joints": joints_map}
         except Exception as e:
             if hasattr(self.exec, "log"):
@@ -1105,6 +1127,7 @@ class TcpKinematicsFrame(ttk.Frame):
         self.txt.delete("1.0", tk.END)
 
         lims = self._limits_for_preview()
+        has_bad_vals = False
 
         for i, ln in enumerate(lines):
             if not ln.strip():
@@ -1120,6 +1143,8 @@ class TcpKinematicsFrame(ttk.Frame):
                             val = float(part[len(ax):])
                             lo, hi = lims.get(ax, (-9999, 9999))
                             tag = "ok" if lo <= val <= hi else "bad_val"
+                            if tag == "bad_val":
+                                has_bad_vals = True
                         except Exception:
                             tag = "plain"
                 self.txt.insert(tk.END, part + " ", tag)
@@ -1127,13 +1152,14 @@ class TcpKinematicsFrame(ttk.Frame):
 
         self.txt.see("end")
         self.txt.configure(state="disabled")
+        self._preview_has_limit_violations = bool(has_bad_vals)
 
     # =========================================================
-    # MAIN SEQUENCE GENERATOR (RET → TAR → RET)
+    # MAIN SEQUENCE GENERATOR (RET  TAR  RET)
     # =========================================================
     def _run(self):
         try:
-            # 1) Pose aus Maske lesen
+            # 1) Read pose from mask
             def f(var: tk.StringVar):
                 try:
                     return float(var.get().replace(",", "."))
@@ -1147,7 +1173,7 @@ class TcpKinematicsFrame(ttk.Frame):
             pitch_deg_pose = f(self.tcp_pitch)
             yaw_deg_pose = f(self.tcp_yaw)
 
-            # 2) Overrides anwenden (0 = "kein Override")
+            # 2) Apply overrides (0 = "no override")
             pitch_pose = (
                 float(self.pitch_override.get())
                 if abs(self.pitch_override.get()) > 1e-9
@@ -1158,9 +1184,9 @@ class TcpKinematicsFrame(ttk.Frame):
                 if abs(self.roll_override.get()) > 1e-9
                 else roll_deg_pose
             )
-            yaw = yaw_deg_pose  # aktuell kein Override
+            yaw = yaw_deg_pose  # currently no override
 
-            # 3) Tool-Achse aus Euler-Winkeln bestimmen (Pitch bleibt im UI-Sinn)
+            # 3) Derive tool axis from Euler angles (pitch stays in UI convention)
             u = self._get_tool_axis_world(roll_pose, pitch_pose, yaw)
             if self.invert_u.get():
                 u = (-u[0], -u[1], -u[2])
@@ -1170,7 +1196,7 @@ class TcpKinematicsFrame(ttk.Frame):
             anchor = (self.anchor_mode.get() or "zero").lower()
 
             # 4) Anchor-Logik
-            #    P_zero = Mitte zwischen Retreat und Target
+            #    P_zero = midpoint between retreat and target
             if anchor == "target":
                 # Maske = Target
                 P_tar = (X, Y, Z)
@@ -1243,27 +1269,51 @@ class TcpKinematicsFrame(ttk.Frame):
                 d_task = self._pose_error([P[0], P[1], P[2]], target_R, base_pos, base_R)
                 d_joint = self._mat_vec_mul(J_inv, d_task)
                 j = {}
-                for i, ax in enumerate(DH_AXES):
+                for i, ax in enumerate(self._dh_axes()):
                     j[ax] = base_joints[i] + d_joint[i]
                 ok = self._check_limits(j, lims)
-                g = ("G0" if rapid else "G1") + " " + " ".join(
-                    f"{ax}{j[ax]:.3f}" for ax in AXES
+                # Use controlled feed moves only; rapid with rotary joints can trigger controller alarms.
+                g = "G1 " + " ".join(
+                    f"{ax}{j[ax]:.3f}" for ax in self._dh_axes()
                 )
-                if not rapid:
-                    g += f" F{F:.0f}"
-                return g, ok
+                g += f" F{F:.0f}"
+                return g, ok, j
 
             # RET
-            g, ok = to_line(P_ret, True)
+            if anchor == "retreat":
+                j_ret = {ax: base_joints[i] for i, ax in enumerate(self._dh_axes())}
+                ok = self._check_limits(j_ret, lims)
+                g = "G1 " + " ".join(f"{ax}{j_ret[ax]:.3f}" for ax in self._dh_axes()) + f" F{F:.0f}"
+            else:
+                g, ok, j_ret = to_line(P_ret, True)
             lines.append(g)
             bad.append(not ok)
+
+            # DH plausibility hint:
+            # For anchor=retreat, first move should be ~current joint state.
+            if anchor == "retreat":
+                cur = {ax: base_joints[i] for i, ax in enumerate(self._dh_axes())}
+                dmax = 0.0
+                for ax in self._dh_axes():
+                    d = abs(float(j_ret.get(ax, 0.0)) - float(cur.get(ax, 0.0)))
+                    if d > dmax:
+                        dmax = d
+                if hasattr(self.exec, "log"):
+                    self.exec.log(f"Kinematics check (retreat): joint_max={dmax:.3f}")
+                    if dmax > 0.5:
+                        self.exec.log(" Retreat start differs from current pose -> DH/offset mismatch likely.")
+                    if dmax > 5.0:
+                        raise RuntimeError(
+                            f"Retreat start mismatch too large (joint_max={dmax:.2f}). "
+                            "Sequence aborted for safety."
+                        )
 
             # TAR
-            g, ok = to_line(P_tar, False)
+            g, ok, _j_tar = to_line(P_tar, False)
             lines.append(g)
             bad.append(not ok)
 
-            # GREIFER → optional mit Pausen
+            # GRIPPER -> optional with pauses
             if self.use_gripper.get():
                 before_ms = max(0, int(self.grip_pause_before_ms.get()))
                 after_ms = max(0, int(self.grip_pause_after_ms.get()))
@@ -1281,7 +1331,7 @@ class TcpKinematicsFrame(ttk.Frame):
                     bad.append(False)
 
             # RET BACK (safety non-rapid)
-            g, ok = to_line(P_ret, False)
+            g, ok, _j_ret2 = to_line(P_ret, False)
             lines.append(g)
             bad.append(not ok)
 
@@ -1327,18 +1377,22 @@ class TcpKinematicsFrame(ttk.Frame):
         if not hasattr(self.exec, "entry_cmd"):
             return
         self.exec.entry_cmd.delete(0, tk.END)
-        # Mehrzeilig in die CLI übernehmen
+        # Insert multi-line content into CLI
         self.exec.entry_cmd.insert(0, "\n".join(lines))
         if hasattr(self.exec, "log"):
             self.exec.log("Preview copied to CLI.")
 
     def _execute_direct(self):
         """
-        Sendet Preview in die CLI und startet direkt cli_send_now()
-        (also: Send to CLI + sofortige Ausführung).
+        Sends preview to CLI and starts cli_send_now() directly
+        (i.e., send to CLI + immediate execution).
         """
+        if bool(getattr(self, "_preview_has_limit_violations", False)):
+            if hasattr(self.exec, "log"):
+                self.exec.log("TCP Sequence blocked: preview contains joint limit violations.")
+            return
         self._send_preview_to_cli()
-        # ExecuteApp hat cli_send_now() – nutzen, falls vorhanden
+        # ExecuteApp hat cli_send_now()  nutzen, falls vorhanden
         try:
             if hasattr(self.exec, "cli_send_now"):
                 self.exec.cli_send_now()
@@ -1373,13 +1427,13 @@ class TcpKinematicsFrame(ttk.Frame):
 
 
 # =========================================================
-# TCP World Kinematics – einfacher Container
+# TCP World Kinematics  einfacher Container
 # =========================================================
 
 class TcpWorldKinematicsTabs(ttk.Frame):
     """
-    Container ohne eigenes Notebook:
-    Der Inhalt des Kinematics-Tabs ist direkt der TcpKinematicsFrame.
+    Container without its own notebook:
+    The kinematics tab content is directly the TcpKinematicsFrame.
     """
 
     def __init__(self, master, execute_app, client):
@@ -1393,7 +1447,7 @@ class TcpWorldKinematicsTabs(ttk.Frame):
         self.world.pack(fill=tk.BOTH, expand=True)
 
         # -------------------------------------------------
-        # Gamepad-kompatible Proxy-Methoden für Preview etc.
+        # Gamepad-compatible proxy methods for preview, etc.
         # -------------------------------------------------
     def preview(self):
         """Generiert Preview wie _run()."""
@@ -1410,7 +1464,7 @@ class TcpWorldKinematicsTabs(ttk.Frame):
         return self.preview()
 
     def execute_sequence(self):
-        """Direkt ausführen."""
+        """Execute immediately."""
         if hasattr(self.world, "_execute_direct"):
             return self.world._execute_direct()
 
@@ -1425,12 +1479,12 @@ class TcpWorldKinematicsTabs(ttk.Frame):
 
     def set_tcp_as_reference(self):
         """
-        Gamepad: nur TCP -> Maske übertragen (Weltkoordinaten setzen).
+        Gamepad: transfer only TCP -> mask (set world coordinates).
         Trigger: tcp_set_tcp_as_reference
         """
         if hasattr(self.world, "pose_to_mask_only"):
             return self.world.pose_to_mask_only()
-        # fallback: wenn aus irgendeinem Grund nicht gesetzt
+        # fallback: if not set for any reason
         if hasattr(self.world, "set_mask_from_current_pose"):
             return self.world.set_mask_from_current_pose()
         return None
@@ -1441,13 +1495,13 @@ class TcpWorldKinematicsTabs(ttk.Frame):
 
     def solve_and_execute_sequence(self):
         """
-        Gamepad: TCP -> Maske, Sequenz lösen und ausführen.
+        Gamepad: TCP -> mask, solve sequence, and execute.
         Trigger: tcp_solve_seq_and_execute
         """
         if hasattr(self.world, "pose_to_mask_and_solve_execute"):
             return self.world.pose_to_mask_and_solve_execute()
 
-        # fallback: wenn callable nicht vorhanden (sicherer Weg)
+        # fallback: if callable is unavailable (safer path)
         self.set_tcp_as_reference()
         if hasattr(self.world, "_run"):
             self.world._run()
@@ -1457,7 +1511,7 @@ class TcpWorldKinematicsTabs(ttk.Frame):
 
     def pose_to_mask_and_generate(self):
         """
-        Gamepad: TCP -> Maske, Sequenz lösen (Generate) ohne Ausführung.
+        Gamepad: TCP -> mask, solve sequence (Generate) without execution.
         Trigger: tcp_pose_to_mask_and_generate
         """
         if hasattr(self.world, "pose_to_mask_and_generate"):

@@ -1,6 +1,6 @@
 ﻿{
-  "edge_length_mm": 50.0,
-  "grasp_offset_mm": 25.0,
+  "edge_length_mm": 25.25,
+  "grasp_offset_mm": 12.625,
   "approach_distance_mm": 40.0,
   "lift_distance_mm": 60.0,
   "grasp_normal_axis": "z",

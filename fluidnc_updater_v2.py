@@ -1,7 +1,7 @@
 # fluidnc_updater_v2.py
 # Standalone FluidNC OTA + $$ Inspector + Config Manager
 # Ready to integrate as a tab/frame.
-# Authors: ChatGPT & Tobias Krämer
+# Authors: ChatGPT & Tobias Kraemer
 # Date: 2025-11-01
 
 import tkinter as tk
@@ -26,7 +26,7 @@ class FluidNCClient:
         self.base = f"http://{self.host}"
 
     def command(self, line: str) -> str:
-        """Send a plain command via /command?plain=..."""
+        """Send a plain command via /commandGRIP CLOSEplain=..."""
         url = f"{self.base}/command"
         params = {"plain": line}
         r = requests.get(url, params=params, timeout=self.timeout)
@@ -63,7 +63,7 @@ class FluidNCClient:
     def get_active_config(self) -> str | None:
         try:
             txt = self.command("$Config/Filename")
-            m = re.search(r"([A-Za-z0-9_\-/.]+\.ya?ml)", txt)
+            m = re.search(r"([A-Za-z0-9_\-/.]+\.yaGRIP CLOSEml)", txt)
             if m:
                 return m.group(1)
             s = txt.strip()
@@ -77,14 +77,14 @@ class FluidNCClient:
         cmd = f"$Config/Filename={filename}"
         return self.command(cmd)
 
-    # ✅ hier kommt jetzt die fehlende reboot()-Methode
+    #  hier kommt jetzt die fehlende reboot()-Methode
     def reboot(self) -> bool:
         """Reboot FluidNC (fire & forget). A network error means success."""
         try:
             url = f"{self.base}/command"
             params = {"plain": "$System/Control=RESTART"}
             r = requests.get(url, params=params, timeout=self.timeout)
-            # Wenn Antwort 'ok', ist es sowieso gut
+            # If response is 'ok', that is already good
             if r.ok:
                 txt = r.text.lower()
                 if "ok" in txt or "restart" in txt:
@@ -94,7 +94,7 @@ class FluidNCClient:
             # Timeout = Reboot erfolgreich (ESP hat Verbindung abgebrochen)
             return True
         except requests.exceptions.ConnectionError:
-            # Verbindung verloren = Reboot ausgelöst
+            # Connection lost = reboot triggered
             return True
         except Exception:
             return False
@@ -140,13 +140,13 @@ class FluidNCClient:
     def upload_config_yaml(self, yaml_path: str, remote_name: str | None = None) -> str:
         """
         Upload a YAML config to the ESP's local filesystem.
-        Compatible with FluidNC 3.5–3.9.
+        Compatible with FluidNC 3.53.9.
         """
         fn = remote_name or os.path.basename(yaml_path)
         with open(yaml_path, "rb") as f:
             data = f.read()
 
-        # 1️⃣ Modern REST API (FluidNC 3.9+)
+        # 1 Modern REST API (FluidNC 3.9+)
         try:
             url = f"{self.base}/api/files/localfs/{urllib.parse.quote(fn)}"
             files = {"file": (fn, data, "text/yaml")}
@@ -156,7 +156,7 @@ class FluidNCClient:
         except Exception as e:
             last_err = str(e)
 
-        # 2️⃣ Legacy WebUI /upload
+        # 2 Legacy WebUI /upload
         try:
             url = f"{self.base}/upload"
             files = {"upload": (fn, data, "text/yaml")}
@@ -167,7 +167,7 @@ class FluidNCClient:
         except Exception as e:
             last_err = str(e)
 
-        # 3️⃣ LittleFS /edit fallback
+        # 3 LittleFS /edit fallback
         try:
             url = f"{self.base}/edit"
             files = {"data": (fn, data, "text/yaml")}
@@ -238,19 +238,19 @@ class FluidNCUpdaterFrame(ttk.Frame):
         self._build_ui()
         self._lock = threading.Lock()
 
-        # ⚙️ Auto-IP-Detect nach GUI-Init starten (Mainthread → Workerthread)
+        #  Start auto IP detection after GUI init (main thread -> worker thread)
         self.after(300, self._start_auto_detect)
 
-    # --------------- Auto-Detect IP (nur Netzwerk, kein UI) ---------------
+    # --------------- Auto-detect IP (network only, no UI) ---------------
 
     def _auto_detect_ip(self) -> str | None:
         """
-        Versucht zuerst DEFAULT_IP, danach scannt sie typische Subnetze nach
-        einem FluidNC-Gerät (GET /command?plain=$I).
-        Gibt gefundene IP als String zurück oder None.
+        First tries DEFAULT_IP, then scans typical subnets for
+        a FluidNC device (GET /commandGRIP CLOSEplain=$I).
+        Returns found IP as a string or None.
         """
 
-        # 1️⃣ Erst die vordefinierte IP direkt testen
+        # 1 Erst die vordefinierte IP direkt testen
         try:
             self.client.set_host(DEFAULT_IP)
             if self.client.is_alive():
@@ -258,7 +258,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
         except Exception:
             pass
 
-        # 2️⃣ Typische lokale Subnetze (bei Bedarf anpassen/erweitern)
+        # 2 Typische lokale Subnetze (bei Bedarf anpassen/erweitern)
         bases = [
             "192.168.0.",
             "192.168.1.",
@@ -267,7 +267,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
             "192.168.178.",  # Fritz!Box-Standard in DE
         ]
 
-        timeout = 0.5  # etwas großzügiger als 0.15s
+        timeout = 0.5  # slightly more generous than 0.15s
 
         for base in bases:
             for i in range(1, 255):
@@ -280,7 +280,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
                         continue
 
                     txt = r.text.strip()
-                    # Nicht zu streng sein – jede sinnvolle Antwort zählt
+                    # Do not be too strict: any meaningful response counts
                     if txt:
                         return host
                 except Exception:
@@ -289,7 +289,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
         return None
 
     def _start_auto_detect(self):
-        """Startet den Netzwerkscan in einem Background-Thread und updatet
+        """Start network scan in a background thread and update
         danach die UI im Mainthread via .after(...)."""
 
         def worker():
@@ -303,13 +303,13 @@ class FluidNCUpdaterFrame(ttk.Frame):
                     ok = self.client.is_alive()
                     self._set_connected(ok)
                     if ok:
-                        self._ui_info(f"Automatisch verbunden mit {ip}")
+                        self._ui_info(f"Automatically connected to {ip}")
                     else:
-                        self._ui_info(f"IP automatisch gefunden ({ip}), aber keine Antwort auf $I.")
+                        self._ui_info(f"IP auto-detected ({ip}), but no response to $I.")
                 else:
-                    self._ui_info("Automatische IP-Suche: kein Gerät gefunden, verwende DEFAULT_IP.")
+                    self._ui_info("Automatic IP scan: no device found, using DEFAULT_IP.")
 
-            # Ergebnis zurück in den Tk-Hauptthread
+            # Return result to Tk main thread
             self.after(0, apply_result)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -327,7 +327,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
 
         ttk.Button(head, text="Connect / Check", command=self._on_connect).pack(side="left", padx=6)
 
-        self.conn_status = ttk.Label(head, text="● Disconnected", foreground="#b71c1c")
+        self.conn_status = ttk.Label(head, text=" Disconnected", foreground="#b71c1c")
         self.conn_status.pack(side="right", padx=8)
 
         # --- Notebook ---
@@ -354,7 +354,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
 
     def _set_connected(self, ok: bool):
         self.conn_status.configure(
-            text="● Connected" if ok else "● Disconnected",
+            text=" Connected" if ok else " Disconnected",
             foreground=("#2e7d32" if ok else "#b71c1c")
         )
 
@@ -367,7 +367,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
             host = self.ip_var.get().strip()
             if not host:
                 # UI-Update wieder in den Hauptthread geben
-                self.after(0, lambda: self._ui_info("Bitte Host/IP eingeben."))
+                self.after(0, lambda: self._ui_info("Please enter host/IP."))
                 return
 
             self.client.set_host(host)
@@ -375,18 +375,18 @@ class FluidNCUpdaterFrame(ttk.Frame):
 
             def apply():
                 self._set_connected(ok)
-                self._ui_info("Verbunden." if ok else "Keine Antwort.")
+                self._ui_info("Connected." if ok else "No response.")
             self.after(0, apply)
 
         self._with_thread(work)
 
     def _ui_info(self, s: str):
-        """Loggt Text in das Log-Textfeld (wenn vorhanden)."""
+        """Log text to the log text field (if available)."""
         try:
             self.log.insert("end", s + "\n")
             self.log.see("end")
         except Exception:
-            # Beim Start vor dem Bau des Logs einfach still ignorieren
+            # At startup, before log widget creation, silently ignore
             pass
 
 
@@ -396,21 +396,21 @@ class FluidNCUpdaterFrame(ttk.Frame):
         top = ttk.Frame(self.tab_status)
         top.pack(fill="x", pady=(2, 2))
         ttk.Button(top, text="Refresh $$", command=self._refresh_dollars).pack(side="left", padx=6)
-        self.last_refresh = ttk.Label(top, text="—")
+        self.last_refresh = ttk.Label(top, text="")
         self.last_refresh.pack(side="left")
 
         # Soft/Hard/Homing flags
         flagsf = ttk.LabelFrame(self.tab_status, text="Machine Limits / Flags")
         flagsf.pack(fill="x", padx=2, pady=2)
 
-        # Richtiger Parent ist flagsf, nicht "parent"
+        # Correct parent is flagsf, not "parent"
         wrap = ttk.Frame(flagsf)
         wrap.pack(fill="x", padx=2, pady=2)
 
-        self.var_soft   = tk.StringVar(value="Soft Limits: —")
-        self.var_hard   = tk.StringVar(value="Hard Limits: —")
-        self.var_homing = tk.StringVar(value="Homing: —")
-        self.var_invert = tk.StringVar(value="Invert Mask ($3): —")
+        self.var_soft   = tk.StringVar(value="Soft Limits: ")
+        self.var_hard   = tk.StringVar(value="Hard Limits: ")
+        self.var_homing = tk.StringVar(value="Homing: ")
+        self.var_invert = tk.StringVar(value="Invert Mask ($3): ")
 
         ttk.Label(wrap, textvariable=self.var_soft,   width=20, anchor="w").grid(row=0, column=0, padx=4)
         ttk.Label(wrap, textvariable=self.var_hard,   width=20, anchor="w").grid(row=0, column=1, padx=4)
@@ -431,7 +431,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
 
         btns = ttk.Frame(self.tab_status)
         btns.pack(fill="x", padx=2, pady=2)
-        ttk.Button(btns, text="Export $$ to file…", command=self._export_dollars).pack(side="left")
+        ttk.Button(btns, text="Export $$ to file...", command=self._export_dollars).pack(side="left")
 
     # --------- Tab: Configs ----------
     def _build_tab_configs(self):
@@ -445,7 +445,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
         info = ttk.Frame(self.tab_cfg)
         info.pack(fill="x", padx=2)
         ttk.Label(info, text="Active config:").pack(side="left")
-        self.var_active = tk.StringVar(value="—")
+        self.var_active = tk.StringVar(value="")
         ttk.Label(info, textvariable=self.var_active, foreground="#00695c", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
 
         lf = ttk.LabelFrame(self.tab_cfg, text="Flash files")
@@ -463,7 +463,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
         fwf.pack(fill="x", padx=2, pady=(2,2))
         self.var_fw = tk.StringVar(value="")
         ttk.Entry(fwf, textvariable=self.var_fw, width=60).pack(side="left", padx=6, pady=6)
-        ttk.Button(fwf, text="Choose…", command=self._pick_fw).pack(side="left", padx=6)
+        ttk.Button(fwf, text="Choose...", command=self._pick_fw).pack(side="left", padx=6)
         ttk.Button(fwf, text="Upload Firmware", command=self._upload_fw).pack(side="left", padx=6)
 
         # YAML
@@ -471,7 +471,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
         yaml_f.pack(fill="x", padx=2, pady=(2,2))
         self.var_yaml = tk.StringVar(value="")
         ttk.Entry(yaml_f, textvariable=self.var_yaml, width=60).pack(side="left", padx=6, pady=6)
-        ttk.Button(yaml_f, text="Choose…", command=self._pick_yaml).pack(side="left", padx=6)
+        ttk.Button(yaml_f, text="Choose...", command=self._pick_yaml).pack(side="left", padx=6)
         ttk.Button(yaml_f, text="Upload YAML", command=self._upload_yaml).pack(side="left", padx=6)
 
         # Log
@@ -483,7 +483,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
     # ----------------- UI actions -----------------
 
     def _set_connected(self, ok: bool):
-        self.conn_status.configure(text="● Connected" if ok else "● Disconnected",
+        self.conn_status.configure(text=" Connected" if ok else " Disconnected",
                                    foreground=("#2e7d32" if ok else "#b71c1c"))
 
     def _with_thread(self, fn):
@@ -494,15 +494,15 @@ class FluidNCUpdaterFrame(ttk.Frame):
         def work():
             host = self.ip_var.get().strip()
             if not host:
-                self._ui_info("Bitte Host/IP eingeben.")
+                self._ui_info("Please enter host/IP.")
                 return
             self.client.set_host(host)
             ok = self.client.is_alive()
             self._set_connected(ok)
             if ok:
-                self._ui_info("Verbunden.")
+                self._ui_info("Connected.")
             else:
-                self._ui_info("Keine Antwort.")
+                self._ui_info("No response.")
         self._with_thread(work)
 
     def _ui_info(self, s):
@@ -535,14 +535,14 @@ class FluidNCUpdaterFrame(ttk.Frame):
         hom = flag(FLAG_KEYS["homing"])
         inv = parsed.get(FLAG_KEYS["invert_mask"], None)
 
-        self.var_soft.set(f"Soft Limits ($20): {'ON' if soft==1 else ('OFF' if soft==0 else '—')}")
+        self.var_soft.set(f"Soft Limits ($20): {'ON' if soft==1 else ('OFF' if soft==0 else '')}")
         if hard in (0,1):
             self.var_hard.set(f"Hard Limits ($21): {'ON' if hard==1 else 'OFF'}")
         else:
-            self.var_hard.set("Hard Limits ($21): —")
-        self.var_homing.set(f"Homing ($22): {'ON' if hom==1 else ('OFF' if hom==0 else '—')}")
+            self.var_hard.set("Hard Limits ($21): ")
+        self.var_homing.set(f"Homing ($22): {'ON' if hom==1 else ('OFF' if hom==0 else '')}")
         if inv is None:
-            self.var_invert.set("Invert Mask ($3): —")
+            self.var_invert.set("Invert Mask ($3): ")
         else:
             try:
                 mask = int(inv)
@@ -554,7 +554,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
         self.tree.delete(*self.tree.get_children())
         def get_val(code):
             v = parsed.get(code, None)
-            return f"{v:.3f}" if isinstance(v, (int, float, float)) else (str(v) if v is not None else "—")
+            return f"{v:.3f}" if isinstance(v, (int, float, float)) else (str(v) if v is not None else "")
 
         for ax in AXES:
             steps = get_val(SETTINGS_MAP["steps"][ax])
@@ -573,7 +573,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
                 return
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines))
-            messagebox.showinfo("Export", f"Gespeichert: {path}")
+            messagebox.showinfo("Export", f"Saved: {path}")
         except Exception as e:
             messagebox.showerror("Export Error", str(e))
 
@@ -593,7 +593,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
     def _get_active(self):
         def work():
             name = self.client.get_active_config()
-            self.var_active.set(name or "—")
+            self.var_active.set(name or "")
             if name:
                 self._ui_info(f"Aktive Config: {name}")
             else:
@@ -603,20 +603,20 @@ class FluidNCUpdaterFrame(ttk.Frame):
     def _set_active_from_sel(self):
         sel = self.files_list.curselection()
         if not sel:
-            messagebox.showwarning("Set Active", "Bitte eine Datei in der Liste markieren.")
+            messagebox.showwarning("Set Active", "Please select a file in the list.")
             return
         filename = self.files_list.get(sel[0])
         if not (filename.endswith(".yaml") or filename.endswith(".yml")):
-            if not messagebox.askyesno("Bestätigen", f"'{filename}' ist keine YAML. Trotzdem als aktive Config setzen?"):
+            if not messagebox.askyesno("Confirm", f"'{filename}' is not a YAML file. Set it as active config anywayGRIP CLOSE"):
                 return
         def work():
             try:
                 resp = self.client.set_active_config(filename)
-                self._ui_info(f"SetActive → {resp}")
+                self._ui_info(f"SetActive  {resp}")
                 self.var_active.set(filename)
                 time.sleep(1.0)
                 ok = self.client.reboot()
-                self._ui_info("Reboot gesendet." if ok else "Reboot fehlgeschlagen.")
+                self._ui_info("Reboot command sent." if ok else "Reboot failed.")
             except Exception as e:
                 messagebox.showerror("Set Active Error", str(e))
         self._with_thread(work)
@@ -648,7 +648,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
     def _upload_fw(self):
         path = self.var_fw.get().strip()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("Firmware", "Bitte eine .bin Datei wählen.")
+            messagebox.showwarning("Firmware", "Please select a .bin file.")
             return
         def work():
             try:
@@ -667,7 +667,7 @@ class FluidNCUpdaterFrame(ttk.Frame):
     def _upload_yaml(self):
         path = self.var_yaml.get().strip()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("YAML", "Bitte eine YAML-Datei wählen.")
+            messagebox.showwarning("YAML", "Please select a YAML file.")
             return
         def work():
             try:
