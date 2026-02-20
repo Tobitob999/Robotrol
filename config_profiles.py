@@ -5,7 +5,7 @@ import sys
 DEFAULT_PROFILE = "EB300"
 PROFILE_FILES = {
     "Moveo": "Moveo.json",
-    "Red15": "Red15.json",
+    "EB15_red": "EB15_red.json",
     "EB300": "EB300.json",
 }
 

@@ -1,25 +1,28 @@
 {
-  "name": "Red15",
+  "name": "EB15_red",
   "version": 1,
+  "features": {
+    "has_endstops": false
+  },
   "endstops": {
     "version": 1,
     "units": "deg",
     "axes": {
       "X": {
-        "min": -90.0,
-        "max": 90.0
+        "min": -150.0,
+        "max": 150.0
       },
       "Y": {
-        "min": -100.0,
-        "max": 100.0
+        "min": -150.0,
+        "max": 150.0
       },
       "Z": {
-        "min": -90.0,
-        "max": 90.0
+        "min": -150.0,
+        "max": 150.0
       },
       "A": {
-        "min": -90.0,
-        "max": 90.0
+        "min": -180.0,
+        "max": 180.0
       },
       "B": {
         "min": -180.0,
@@ -238,24 +241,31 @@
       "A",
       "X",
       "Y",
-      "B",
       "Z",
+      "B",
       "C"
     ],
     "post_transform": {
-      "mirror_x": true
+      "mirror_x": true,
+      "sim_theta_offset_deg": {
+        "A": -90.0,
+        "Z": 90.0
+      },
+      "sim_theta_scale": {
+        "B": -1.0
+      }
     },
     "joints": [
       {
         "name": "joint1_A",
         "axis": "A",
         "a": 0.0,
-        "alpha": -1.5707963267948966,
+        "alpha": 1.5707963267948966,
         "d": 0.076,
         "theta_offset": 0.0,
         "q_min": -3.14159265359,
         "q_max": 3.14159265359,
-        "source_note": "Set per provided DH table: theta=0, alpha=+90deg, d=L1, a=0."
+        "source_note": "EB15 upright sim/base orientation: alpha=+90deg, d=L1, a=0."
       },
       {
         "name": "joint2_X",
@@ -263,10 +273,10 @@
         "a": 0.235,
         "alpha": 0.0,
         "d": 0.0,
-        "theta_offset": 0.0,
+        "theta_offset": 1.5707963267948966,
         "q_min": -3.14159265359,
         "q_max": 3.14159265359,
-        "source_note": "Set per provided DH table: theta=+90deg, alpha=0, d=0, a=L2."
+        "source_note": "EB15 upright sim/base orientation: theta_offset=+90deg, alpha=0, d=0, a=L2."
       },
       {
         "name": "joint3_Y",
@@ -277,29 +287,29 @@
         "theta_offset": 0.0,
         "q_min": -3.14159265359,
         "q_max": 3.14159265359,
-        "source_note": "Set per provided DH table: theta=-90deg, alpha=-90deg, d=0, a=0."
+        "source_note": "EB15 upright sim/base orientation: shoulder/elbow geometry row."
       },
       {
-        "name": "joint4_B",
-        "axis": "B",
+        "name": "joint4_Z",
+        "axis": "Z",
         "a": 0.0,
-        "alpha": -1.5707963267948966,
+        "alpha": 1.5707963267948966,
         "d": 0.085,
         "theta_offset": 0.0,
         "q_min": -3.14159265359,
         "q_max": 3.14159265359,
-        "source_note": "Set per provided DH table: theta=0, alpha=+90deg, d=L3, a=0."
+        "source_note": "EB15 upright sim/base orientation: joint order A X Y Z B C, wrist pitch Z."
       },
       {
-        "name": "joint5_Z",
-        "axis": "Z",
+        "name": "joint5_B",
+        "axis": "B",
         "a": 0.0,
         "alpha": 1.5707963267948966,
         "d": 0.076,
         "theta_offset": 0.0,
         "q_min": -3.14159265359,
         "q_max": 3.14159265359,
-        "source_note": "Set per provided DH table: theta=0, alpha=-90deg, d=0, a=0."
+        "source_note": "EB15 axis remap: joint order is A X Y Z B C (this row is wrist roll B)."
       },
       {
         "name": "joint6_C",
@@ -313,5 +323,18 @@
         "source_note": "Set per provided DH table: theta=0, alpha=0, d=L4, a=0."
       }
     ]
+  },
+  "manual_zero_reference": {
+    "source": "manual_zero",
+    "profile": "EB15_red",
+    "pre_g92_machine_pose": {
+      "X": -2.198,
+      "Y": 7.934,
+      "Z": 10.371,
+      "A": -14.115,
+      "B": 80.719,
+      "C": -14.432
+    },
+    "timestamp": 1771513120.2884324
   }
 }

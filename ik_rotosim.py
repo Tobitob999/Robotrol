@@ -1,9 +1,9 @@
 # ik_rotosim.py
 # ------------------------------------------------------------
-# 5-DOF IK für RoboSim v8.1 (Debug-Trace Edition)
-# - numerische DLS-IK (Damped Least Squares) mit optionalen Locks
-# - Auto-Unlock A, wenn Ziel-Yaw nicht konsistent
-# - Sehr ausführlicher Trace (logger=callable)
+# 5-DOF IK for RoboSim v8.1 (debug trace edition)
+# - numeric DLS IK (Damped Least Squares) with optional locks
+# - auto-unlock A if target yaw is inconsistent
+# - Very verbose trace (logger=callable)
 # - ASCII-only
 # ------------------------------------------------------------
 
@@ -110,7 +110,7 @@ class RotoSimIK:
     def _tcp_pose5(self, q: np.ndarray):
         pts, dir_tool = self._fk_points_and_dir(q[0], q[1], q[2], q[3], q[4])
         X, Y, Z = pts[-1]
-        # 4. Feature ist jetzt der Gelenkwinkel A direkt:
+        # 4th feature is now joint angle A directly:
         yawA = q[0]
         dirn = dir_tool / (np.linalg.norm(dir_tool) + 1e-12)
         tilt = math.degrees(math.acos(np.clip(np.dot(dirn, np.array([0.0, 0.0, 1.0])), -1.0, 1.0)))
@@ -129,8 +129,8 @@ class RotoSimIK:
     def _numeric_jacobian(self, q: np.ndarray, active_mask: np.ndarray, eps_deg: float = 0.75):
 
         """
-        Numerischer Jacobian für f(q) = [x,y,z,yaw,tilt].
-        Nur Spalten für aktive Gelenke werden variiert.
+        Numeric Jacobian for f(q) = [x,y,z,yaw,tilt].
+        Only columns of active joints are varied.
         """
         f0 = self._tcp_pose5(q)
         J = np.zeros((5, 5), dtype=float)
@@ -148,8 +148,8 @@ class RotoSimIK:
         Planarer Startwert:
           - A = Lock falls gegeben, sonst Ziel-Yaw
           - B = Lock falls gegeben, sonst 0
-          - X,Y grob aus 2R-Kette (y-z Ebene)
-          - Z ≈ 90° - Tilt
+          - X,Y approximately from 2R chain (y-z plane)
+          - Z  90 - Tilt
         """
         A0 = lock_A_deg if lock_A_deg is not None else Yawd
         B0 = lock_B_deg if lock_B_deg is not None else 0.0
@@ -179,7 +179,7 @@ class RotoSimIK:
         q0 = np.array([A0, X0, Y0, Z0, B0], dtype=float)
         return self._limit_q(q0)
 
-    # ------------------ Public API (mit Debug-Trace) ------------------
+    # ------------------ Public API (with debug trace) ------------------
     def solve_from_pose_locked(
         self,
         Xd: float, Yd: float, Zd: float,
@@ -196,10 +196,10 @@ class RotoSimIK:
         tilt_weight: float = 1.0,          # <-- NEW
     ) -> Optional[Dict[str, float]]:
         """
-        Finde q=[A,X,Y,Z,B] (in Grad), so dass TCP ≈ [Xd,Yd,Zd,Yaw,Tilt].
-        - lock_A_deg / lock_B_deg: Gelenke festsetzen (wenn konsistent).
+        Finde q=[A,X,Y,Z,B] (in Grad), so dass TCP  [Xd,Yd,Zd,Yaw,Tilt].
+        - lock_A_deg / lock_B_deg: lock joints (if consistent).
         - seed: optionaler Startwert {"A":..,"X":..,"Y":..,"Z":..,"B":..}
-        - tilt_weight < 1.0 erlaubt kleine Tilt-Abweichungen, stabiler bei B≠0.
+        - tilt_weight < 1.0 erlaubt kleine Tilt-Abweichungen, stabiler bei B0.
         """
 
         def log(msg: str):
@@ -233,7 +233,7 @@ class RotoSimIK:
             q[4] = float(lock_B_deg)
             active[4] = False
 
-        # ---------- Fehler-Gewichte ----------
+        # ---------- Error weights ----------
         arm_scale = max(1.0, (float(self.geom.L1) + float(self.geom.L2) + float(self.geom.L_tool)) / 3.0)
         w = np.array([
             1.0,                 # X
@@ -246,7 +246,7 @@ class RotoSimIK:
         w[4] *= max(0.0, float(tilt_weight))
 
 
-        # Fehler-Gewichte
+        # Error weights
         arm_scale = max(1.0, (float(self.geom.L1) + float(self.geom.L2) + float(self.geom.L_tool)) / 3.0)
         w = np.array([1.0, 1.0, 1.0, arm_scale * 0.10, arm_scale * 0.15], dtype=float)
 
@@ -282,7 +282,7 @@ class RotoSimIK:
                 if pos_err <= pos_tol_mm and ang_err <= ang_tol_deg:
                     q = self._limit_q(q)
                     self._last_q = q.copy()
-                    log(f"✅ CONVERGED at it {attempt}.{it:03d}  pos_err={pos_err:.6f}  ang_err={ang_err:.6f}")
+                    log(f" CONVERGED at it {attempt}.{it:03d}  pos_err={pos_err:.6f}  ang_err={ang_err:.6f}")
                     log(f"Result q   : {_fmt(q)}")
                     log("=== IK TRACE END (OK) ===")
                     return {"A": q[0], "X": q[1], "Y": q[2], "Z": q[3], "B": q[4]}
@@ -292,7 +292,7 @@ class RotoSimIK:
                 # Metriken
                 JT = J.T
                 JJt = J @ JT
-                # einfache Konditionszahl-Schätzung (über SVD)
+                # simple condition-number estimate (via SVD)
                 try:
                     s = np.linalg.svd(J, compute_uv=False)
                     cond = float((s.max() / max(1e-12, s.min()))) if s.size else float('inf')
@@ -306,20 +306,20 @@ class RotoSimIK:
                     JJt[i, i] += (lam * lam)
                 try:
                     step = JT @ np.linalg.solve(JJt, we)
-                    # nur aktive DOFs
+                    # active DOFs only
                     step = step * active.astype(float)
                 except np.linalg.LinAlgError:
                     lam *= 1.5
                     log(f"            (JJt ill-conditioned) -> increase lambda -> {lam:.6f}")
                     continue
 
-                # Schrittbegrenzung (gröbere Schritte erlaubt, damit er „drüber“ kommt)
+                # Step limiting (coarser steps allowed to cross barriers)
                 max_step = 15.0
                 step_clamped = np.clip(step, -max_step, +max_step)
 
                 # Protokoll
                 log(f"            J-norms: ||J||F={np.linalg.norm(J):.6f}  cond~={cond:.3f}  lambda={lam:.6f}")
-                log(f"            step   : {_fmt(step)} (clamped→ {_fmt(step_clamped)})  active={active.tolist()}")
+                log(f"            step   : {_fmt(step)} (clamped {_fmt(step_clamped)})  active={active.tolist()}")
 
                 # Update
                 q_new = self._limit_q(q + step_clamped)
@@ -341,7 +341,7 @@ class RotoSimIK:
                 log(f"            lambda' -> {lam:.6f}")
                 q = q_new
 
-            log(f"⚠️ attempt {attempt}: no convergence within {max_iters} iterations.")
+            log(f" attempt {attempt}: no convergence within {max_iters} iterations.")
 
-        log("❌ IK TRACE END (NO SOLUTION)")
+        log(" IK TRACE END (NO SOLUTION)")
         return None

@@ -9,7 +9,7 @@ Robotrol is a Python-based control center for 6-DoF robotic arms running FluidNC
 - TCP sequence generator (retreat/target/retreat)
 - OpenCV-based camera and board-vision tools
 - UDP mirror to 3D visualizer
-- Profile system (Moveo, Red15/EB15, EB300)
+- Profile system (Moveo, EB15_red, EB300)
 
 ## Requirements
 - Windows 11
@@ -18,16 +18,17 @@ Robotrol is a Python-based control center for 6-DoF robotic arms running FluidNC
 
 ## Run
 ```powershell
-python Robotrol_FluidNC_v6_2.py
+python Robotrol_FluidNC_v6_3.py
 ```
 
 ## Profiles
-Profiles live in `Moveo.json`, `Red15.json`, and `EB300.json`. Use the profile selector in the UI to switch.
+Profiles live in `Moveo.json`, `EB15_red.json`, and `EB300.json`. Use the profile selector in the UI to switch.
 
 ## Repo layout
-- `Robotrol_FluidNC_v6_2.py` main UI
+- `Robotrol_FluidNC_v6_2.py` main UI core (window title: V6.3)
+- `Robotrol_FluidNC_v6_3.py` launcher entrypoint
 - `config_profiles.py` profile loader
-- `Moveo.json`, `Red15.json`, `EB300.json` profiles
+- `Moveo.json`, `EB15_red.json`, `EB300.json` profiles
 - `tcp_pose_module_v3.py` FK/TCP panel
 - `tcp_world_kinematics_frame.py` TCP sequence generator
 - `fluidnc_updater_v2.py` OTA/serial tools
@@ -36,3 +37,25 @@ Profiles live in `Moveo.json`, `Red15.json`, and `EB300.json`. Use the profile s
 
 ## Notes
 - Build artifacts (`build/`, `dist/`) and caches are not tracked in Git.
+
+## Calibration
+- See `CALIBRATION_GUIDE_v6_3.md` for the complete camera + chessboard calibration procedure and acceptance criteria.
+- Project language policy is defined in `configs/project_flags.json` (`language = en`).
+- Ongoing migration tracker: `LANGUAGE_MIGRATION_EN.md`.
+- Self-learning concept: `SELF_LEARNING_TNT_CONCEPT.md`.
+
+## Self-Learning (TNT)
+- In `Pick&Place -> Run`, use `Self-Learning (TNT)` controls:
+  - enable learning
+  - start in `shadow` mode for validation
+  - switch to `active` only after stable tests
+  - use `Reset Policy` to return to baseline
+
+## Quality Checks
+- Run language consistency check:
+  - `python tools/check_english_text.py`
+  - `python tools/check_english_text.py --strict` (non-zero exit on findings; CI-friendly)
+- Run full smoke checks (language + mock simulation):
+  - `python tools/smoke_checks.py`
+- Hardware validation checklist:
+  - `HARDWARE_VALIDATION_CHECKLIST.md`

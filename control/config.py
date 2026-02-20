@@ -15,6 +15,8 @@ CONFIG_FILES = {
     "calibration": os.path.join("configs", "calibration.json"),
     "tnt": os.path.join("configs", "tnt.json"),
     "chess": os.path.join("configs", "chess.json"),
+    "project_flags": os.path.join("configs", "project_flags.json"),
+    "tnt_learning": os.path.join("configs", "tnt_learning.json"),
 }
 
 

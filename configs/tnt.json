@@ -1,7 +1,7 @@
 ﻿{
-  "edge_length_mm": 50.0,
-  "face_offset_mm": 25.0,
-  "min_area_px": 500,
+  "edge_length_mm": 25.25,
+  "face_offset_mm": 12.625,
+  "min_area_px": 300,
   "color_order": "rgb",
   "hsv_red_ranges": [
     [0, 40, 30, 12, 255, 255],

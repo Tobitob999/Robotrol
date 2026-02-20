@@ -40,13 +40,25 @@ class ImageFileCamera(CameraInterface):
 
 
 class OpenCVCamera(CameraInterface):
-    def __init__(self, device_index: int):
+    def __init__(self, device_index: int, width: int | None = None, height: int | None = None, fps: int | None = None, backend: str | None = None):
         import cv2
         self.cv2 = cv2
-        self.cap = self.cv2.VideoCapture(device_index)
+        backend_map = {
+            "dshow": self.cv2.CAP_DSHOW,
+            "msmf": self.cv2.CAP_MSMF,
+            "any": self.cv2.CAP_ANY,
+        }
+        api_pref = backend_map.get((backend or "any").lower(), self.cv2.CAP_ANY)
+        self.cap = self.cv2.VideoCapture(device_index, api_pref)
         self.color_order = "bgr"
         if not self.cap.isOpened():
             raise RuntimeError("Failed to open camera device")
+        if width is not None and int(width) > 0:
+            self.cap.set(self.cv2.CAP_PROP_FRAME_WIDTH, int(width))
+        if height is not None and int(height) > 0:
+            self.cap.set(self.cv2.CAP_PROP_FRAME_HEIGHT, int(height))
+        if fps is not None and int(fps) > 0:
+            self.cap.set(self.cv2.CAP_PROP_FPS, int(fps))
 
     def get_frame(self) -> Frame:
         ok, frame = self.cap.read()
@@ -62,5 +74,11 @@ def build_camera(config: dict) -> CameraInterface:
     if source == "file":
         return ImageFileCamera(config.get("image_path", ""))
     if source == "device":
-        return OpenCVCamera(int(config.get("device_index", 0)))
+        return OpenCVCamera(
+            int(config.get("device_index", 0)),
+            width=config.get("width"),
+            height=config.get("height"),
+            fps=config.get("fps"),
+            backend=config.get("backend"),
+        )
     raise ValueError("Unknown camera source")

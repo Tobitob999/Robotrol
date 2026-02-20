@@ -1,6 +1,6 @@
 # tcp_pose_module.py
 # =============================================================
-# 🌍 TCP Pose Monitor (plug-in panel) — for RoboControl FluidNC
+#  TCP Pose Monitor (plug-in panel)  for RoboControl FluidNC
 # - 6DOF-DH-Forward-Kinematik (A X Y B Z C)
 # - Eigenes Panel + zentrale FK-Funktion
 # - API:
@@ -20,6 +20,7 @@ from typing import Callable, Dict, Optional
 
 AXES = ["X", "Y", "Z", "A", "B", "C"]
 MOTION_EPS = 0.01
+_DEFAULT_DH_ORDER = ["A", "X", "Y", "B", "Z", "C"]
 
 # Standard-Moveo-Geometrie (mm)
 _DEFAULT_GEOM_DH = {
@@ -41,11 +42,58 @@ def _load_dh_model():
         print("[TcpPosePanel] dh model load failed:", e)
         return None
 
+def _ordered_axes_from_model(model, available_axes=None):
+    if not isinstance(model, dict):
+        return list(_DEFAULT_DH_ORDER)
+
+    available = set(available_axes or [])
+    ordered = []
+    seen = set()
+
+    joint_order = model.get("joint_order", [])
+    if isinstance(joint_order, list):
+        for axis in joint_order:
+            ax = str(axis).strip().upper()
+            if not ax or ax in seen:
+                continue
+            if available and ax not in available:
+                continue
+            ordered.append(ax)
+            seen.add(ax)
+
+    for axis in _DEFAULT_DH_ORDER:
+        if axis in seen:
+            continue
+        if available and axis not in available:
+            continue
+        ordered.append(axis)
+        seen.add(axis)
+
+    if available:
+        for axis in sorted(available):
+            if axis in seen:
+                continue
+            ordered.append(axis)
+            seen.add(axis)
+    return ordered
+
+
 def _build_dh_rows_mm_deg(model):
-    rows = []
+    if not isinstance(model, dict):
+        return []
+
+    joints_by_axis = {}
     for j in model.get("joints", []):
-        axis = (j.get("axis") or "").strip()
+        axis = (j.get("axis") or "").strip().upper()
         if not axis:
+            continue
+        joints_by_axis[axis] = j
+
+    order = _ordered_axes_from_model(model, available_axes=joints_by_axis.keys())
+    rows = []
+    for axis in order:
+        j = joints_by_axis.get(axis)
+        if not j:
             continue
         rows.append(
             {
@@ -61,11 +109,27 @@ def _build_dh_rows_mm_deg(model):
 def _geom_from_model(model):
     rows = _build_dh_rows_mm_deg(model)
     by_axis = {r["axis"]: r for r in rows}
+    order = _ordered_axes_from_model(model, available_axes=by_axis.keys())
+
+    link2_axis = None
+    if "Y" in order:
+        y_idx = order.index("Y")
+        tail = [ax for ax in order[y_idx + 1:] if ax != "C"]
+    else:
+        tail = [ax for ax in order if ax not in ("A", "X", "Y", "C")]
+    for ax in tail:
+        d_val = abs(float(by_axis.get(ax, {}).get("d_mm", 0.0)))
+        if d_val > 1e-9:
+            link2_axis = ax
+            break
+    if link2_axis is None:
+        link2_axis = "B" if "B" in by_axis else "Z"
+
     return {
-        "L1": float(by_axis.get("A", {}).get("d_mm", _DEFAULT_GEOM_DH["L1"])),
-        "L2": float(by_axis.get("X", {}).get("a_mm", _DEFAULT_GEOM_DH["L2"])),
-        "L3": float(by_axis.get("B", {}).get("d_mm", _DEFAULT_GEOM_DH["L3"])),
-        "L4": float(by_axis.get("C", {}).get("d_mm", _DEFAULT_GEOM_DH["L4"])),
+        "L1": abs(float(by_axis.get("A", {}).get("d_mm", _DEFAULT_GEOM_DH["L1"]))),
+        "L2": abs(float(by_axis.get("X", {}).get("a_mm", _DEFAULT_GEOM_DH["L2"]))),
+        "L3": abs(float(by_axis.get(link2_axis, {}).get("d_mm", _DEFAULT_GEOM_DH["L3"]))),
+        "L4": abs(float(by_axis.get("C", {}).get("d_mm", _DEFAULT_GEOM_DH["L4"]))),
     }
 
 _DH_MODEL = _load_dh_model()
@@ -95,10 +159,57 @@ def get_dh_rows_mm_deg():
 def get_dh_axes():
     if _DH_ROWS:
         return [r["axis"] for r in _DH_ROWS]
-    return ["A", "X", "Y", "B", "Z", "C"]
+    return list(_DEFAULT_DH_ORDER)
 
 def get_post_transform():
     return dict(_POST_TRANSFORM)
+
+
+def _clean_joint_map(raw_map):
+    out = {}
+    if not isinstance(raw_map, dict):
+        return out
+    for raw_axis, raw_val in raw_map.items():
+        axis = str(raw_axis).strip().upper()
+        if not axis:
+            continue
+        try:
+            out[axis] = float(raw_val)
+        except Exception:
+            continue
+    return out
+
+
+def get_joint_angle_post_maps():
+    post = get_post_transform()
+    offsets = _clean_joint_map(post.get("sim_theta_offset_deg", {}))
+    scales = _clean_joint_map(post.get("sim_theta_scale", {}))
+    return offsets, scales
+
+
+def apply_joint_angle_post_transform(axis: str, machine_angle_deg: float) -> float:
+    ax = str(axis or "").strip().upper()
+    try:
+        v = float(machine_angle_deg)
+    except Exception:
+        v = 0.0
+    offsets, scales = get_joint_angle_post_maps()
+    scale = float(scales.get(ax, 1.0))
+    offset = float(offsets.get(ax, 0.0))
+    return v * scale + offset
+
+
+def derive_visualizer_geometry_mm(model=None):
+    src = model if isinstance(model, dict) else _DH_MODEL
+    geom = _geom_from_model(src if isinstance(src, dict) else {})
+    order = _ordered_axes_from_model(src if isinstance(src, dict) else {}, available_axes=get_dh_axes())
+    return {
+        "base_height_mm": float(geom["L1"]),
+        "L1_mm": float(geom["L2"]),
+        "L2_mm": float(geom["L3"]),
+        "L_tool_mm": float(geom["L4"]),
+        "joint_order": list(order),
+    }
 
 GEOM_DH = _geom_from_model(_DH_MODEL) if _DH_MODEL else _DEFAULT_GEOM_DH.copy()
 
@@ -123,15 +234,15 @@ def set_dh_model_from_dict(model):
 
 class TcpPosePanel(ttk.LabelFrame):
     """
-    Kleines GUI-Panel mit eigener Rechen-Engine:
-      - hängt sich an client.listeners (raw lines) an
+    Small GUI panel with its own compute engine:
+      - attaches to client.listeners (raw lines)
       - erwartet client.parse_status_line(line) -> (state, positions_dict)
       - rechnet alle poll_interval_ms die TCP-Pose
 
     Orientierungskonvention:
-      • Roll  = Rotation um Tool-X
-      • Pitch = Rotation um Tool-Y
-      • Yaw   = Rotation um Tool-Z (ZYX-Euler aus Welt-Sicht)
+       Roll  = Rotation um Tool-X
+       Pitch = Rotation um Tool-Y
+       Yaw   = rotation around tool Z (ZYX Euler from world view)
     """
 
     def __init__(
@@ -149,12 +260,12 @@ class TcpPosePanel(ttk.LabelFrame):
         self._running = False
         self._listener_hooked = False
 
-        # Achspositionspuffer (IST)
+        # Axis position buffer (actual)
         self.axis_positions = {ax: 0.0 for ax in AXES}
 
         # UI-Text (RPY in richtiger Reihenfolge)
         self._tcp_var = tk.StringVar(
-            value="TCP →\nX=0.00 mm\nY=0.00 mm\nZ=0.00 mm\nRoll=0.00°\nPitch=0.00°\nYaw=0.00°"
+            value="TCP \nX=0.00 mm\nY=0.00 mm\nZ=0.00 mm\nRoll=0.00\nPitch=0.00\nYaw=0.00"
         )
         ttk.Label(
             self,
@@ -163,7 +274,7 @@ class TcpPosePanel(ttk.LabelFrame):
             justify="left",
         ).pack(anchor="w", padx=8, pady=6)
 
-        # Optionaler Callback (wird bei Pose-Änderung aufgerufen)
+        # Optional callback (called on pose change)
         self._pose_changed_cb: Optional[Callable[[Dict[str, float]], None]] = None
 
         # Interner Cache der letzten TCP-Pose (in mm/deg)
@@ -179,7 +290,7 @@ class TcpPosePanel(ttk.LabelFrame):
             "B_deg": 0.0,      # historisch "Tilt"/B
         }
 
-        # Listener registrieren (wenn vorhanden)
+        # Register listener (if available)
         self._attach_listener()
 
     # ---------------- Public API ----------------
@@ -195,7 +306,7 @@ class TcpPosePanel(ttk.LabelFrame):
         self._running = False
 
     def on_pose_changed(self, cb: Callable[[Dict[str, float]], None] | None):
-        """Optionalen Callback registrieren, erhält dict mit X_mm/Y_mm/Z_mm/Roll_deg/Pitch_deg/Yaw_deg/..."""
+        """Register optional callback; receives dict with X_mm/Y_mm/Z_mm/Roll_deg/Pitch_deg/Yaw_deg/..."""
         self._pose_changed_cb = cb
 
     def get_current_tcp_mm(self) -> Dict[str, float]:
@@ -235,7 +346,7 @@ class TcpPosePanel(ttk.LabelFrame):
     def _on_serial_line(self, line: str):
         """
         Erwartet, dass client.parse_status_line(line) -> (state, positions_dict)
-        vorhanden ist.
+        is available.
         """
         try:
             if not hasattr(self.client, "parse_status_line"):
@@ -271,20 +382,20 @@ class TcpPosePanel(ttk.LabelFrame):
             # --- Forward-Kinematics ---
             X, Y, Z, Roll, Pitch, Yaw, Tilt = fk6_forward_mm(self.geom_dh, jpose)
 
-            # Text fürs Label (RPY)
+            # Text for label (RPY)
             lines = [
-                "TCP →",
+                "TCP ",
                 f"X={X:.2f} mm",
                 f"Y={Y:.2f} mm",
                 f"Z={Z:.2f} mm",
-                f"Roll={Roll:.2f}°",
-                f"Pitch={Pitch:.2f}°",
-                f"Yaw={Yaw:.2f}°",
+                f"Roll={Roll:.2f}",
+                f"Pitch={Pitch:.2f}",
+                f"Yaw={Yaw:.2f}",
             ]
             txt = "\n".join(lines)
             self._tcp_var.set(txt)
 
-            # Konsistente Ausgabe in mm/deg für andere Module
+            # Consistent output in mm/deg for other modules
             pose = {
                 "X_mm": X,
                 "Y_mm": Y,
@@ -292,12 +403,12 @@ class TcpPosePanel(ttk.LabelFrame):
                 "Roll_deg": Roll,
                 "Pitch_deg": Pitch,
                 "Yaw_deg": Yaw,
-                # Legacy-Aliases (für alten Code, der noch Tilt erwartet):
+                # Legacy aliases (for old code still expecting Tilt):
                 "Tilt_deg": Tilt,   # = -Pitch in unserer FK-Anpassung
                 "B_deg": Tilt,
             }
 
-            # Callback nur bei echter Änderung
+            # Callback only on real change
             if _pose_diff(self.current_tcp_pose, pose) > 1e-6:
                 self.current_tcp_pose = pose
                 if self._pose_changed_cb:
@@ -309,13 +420,13 @@ class TcpPosePanel(ttk.LabelFrame):
         except Exception as e:
             print("[TcpPosePanel] TCP update error:", e)
 
-        # Nächster Tick
+        # Next tick
         self.after(self.poll_interval, self._tick_tcp_update)
 
 
 # ---------------- kleine Helfer ----------------
 def _pose_diff(a: Dict[str, float], b: Dict[str, float]) -> float:
-    """Kleiner Unterschieds-Score zur Rauschunterdrückung der Callbacks."""
+    """Small delta score used to suppress callback noise."""
     keys = ("X_mm", "Y_mm", "Z_mm", "Roll_deg", "Pitch_deg", "Yaw_deg")
     s = 0.0
     for k in keys:
@@ -323,18 +434,18 @@ def _pose_diff(a: Dict[str, float], b: Dict[str, float]) -> float:
     return s
 
 
-# ===== FK6 (DH) als reine Modul-Funktion – gibt Werte in mm zurück =====
+# ===== FK6 (DH) as pure module function - returns values in mm =====
 def fk6_forward_mm(geom: Dict[str, float], j: Dict[str, float]):
     """
     KORREKTE MOVE0 6DOF FORWARD KINEMATICS
     (identisch zu world_kinematics_frame_v7 + Visualizer + Gamepad)
 
-    Rückgabe:
+    Return:
       X_mm, Y_mm, Z_mm, Roll_deg, Pitch_deg, Yaw_deg, Tilt_deg
 
     Hinweis:
-      • Tilt_deg ist ein historischer Alias (=-Pitch) aus deiner alten World-Kinematik.
-      • Für neue Module bitte nur Roll/Pitch/Yaw verwenden.
+       Tilt_deg is a historical alias (=-Pitch) from older world kinematics.
+       For new modules, use only Roll/Pitch/Yaw.
     """
     import numpy as np
 
@@ -359,7 +470,9 @@ def fk6_forward_mm(geom: Dict[str, float], j: Dict[str, float]):
 
     T = np.eye(4)
     for row in dh_rows:
-        theta_deg = float(j.get(row["axis"], 0.0)) + row["theta_offset_deg"]
+        machine_deg = float(j.get(row["axis"], 0.0))
+        model_deg = apply_joint_angle_post_transform(row["axis"], machine_deg)
+        theta_deg = model_deg + row["theta_offset_deg"]
         th = math.radians(theta_deg)
         al = math.radians(row["alpha_deg"])
         d = float(row["d_mm"])
@@ -387,11 +500,11 @@ def fk6_forward_mm(geom: Dict[str, float], j: Dict[str, float]):
     # -----------------------------
     # Moveo-/Visualizer-Anpassungen
     # -----------------------------
-    # X-Achse invertieren (kompatibel zu deiner Welt-Kinematik)
+    # Invert X axis (compatible with your world kinematics)
     if get_post_transform().get("mirror_x"):
         x = -x
 
-    # „Tilt“ war historischer Name für -Pitch
+    # "Tilt" was the historical name for -Pitch
     tilt = -pitch
 
 

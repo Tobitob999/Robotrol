@@ -1,12 +1,12 @@
 # ============================================================================================
-# 📷 Camera Capture Module v1.1
-# Logitech/USB-Kamera-Integration für RoboControl
+#  Camera Capture Module v1.1
+# Logitech/USB camera integration for RoboControl
 # ============================================================================================
 # Funktionen:
-#   • OpenCV-basierter Video-Stream (Threaded)
-#   • Live-Preview in Tkinter (auch als separater Tab)
-#   • Zugriff auf letzte Frames (für Schachbrett-Erkennung)
-#   • 🟢 Kamera-Erkennung + Auswahlmenü (interne/externe)
+#    OpenCV-basierter Video-Stream (Threaded)
+#    Live-Preview in Tkinter (auch als separater Tab)
+#    Access to latest frames (for chessboard detection)
+#     Camera detection + selection menu (internal/external)
 # ============================================================================================
 
 import cv2
@@ -18,24 +18,35 @@ from tkinter import ttk
 
 
 class CameraCapture:
-    def __init__(self, master=None, camera_index=0, width=640, height=480, fps=30):
+    def __init__(
+        self,
+        master=None,
+        camera_index=0,
+        width=640,
+        height=480,
+        fps=30,
+        preview_width=420,
+        preview_height=320,
+    ):
         self.master = master
         self.camera_index = camera_index
         self.width = width
         self.height = height
         self.fps = fps
+        self.preview_width = preview_width
+        self.preview_height = preview_height
         self.frame = None
         self.running = False
 
-        # --- UI: Frame + Label für Bild ---
+        # --- UI: frame + image label ---
         self.ui_frame = ttk.Frame(master)
 
-        # 🟢 NEU: Kameraauswahl-Dropdown
+        #  NEW: camera selection dropdown
         self.combo_var = tk.StringVar()
         self.available_cameras = self._list_cameras()
-        self.camera_map = {f"Kamera {i}": i for i in self.available_cameras}
+        self.camera_map = {f"Camera {i}": i for i in self.available_cameras}
 
-        combo_label = ttk.Label(self.ui_frame, text="🎥 Kamera wählen:")
+        combo_label = ttk.Label(self.ui_frame, text=" Select camera:")
         combo_label.pack(pady=(5, 0))
         self.combo_box = ttk.Combobox(
             self.ui_frame, textvariable=self.combo_var, values=list(self.camera_map.keys()), state="readonly"
@@ -43,11 +54,15 @@ class CameraCapture:
         self.combo_box.pack(pady=(0, 5))
 
         if self.available_cameras:
-            self.combo_box.current(0)
-            self.camera_index = self.available_cameras[0]
+            if self.camera_index in self.available_cameras:
+                idx = self.available_cameras.index(self.camera_index)
+            else:
+                idx = 0
+                self.camera_index = self.available_cameras[0]
+            self.combo_box.current(idx)
 
         self.combo_box.bind("<<ComboboxSelected>>", self._on_camera_change)
-        # 🟢 ENDE
+        #  ENDE
 
         self.label = ttk.Label(self.ui_frame)
         self.label.pack(padx=4, pady=4)
@@ -57,7 +72,7 @@ class CameraCapture:
         self._lock = threading.Lock()
 
     # ============================================================
-    # 🟢 Kamera-Liste erkennen
+    #  Detect camera list
     # ============================================================
     def _list_cameras(self, max_index=6):
         found = []
@@ -67,10 +82,10 @@ class CameraCapture:
                 found.append(i)
                 cap.release()
         return found
-    # 🟢 ENDE
+    #  ENDE
 
     # ============================================================
-    # 🟢 Kamerawechsel
+    #  Camera switch
     # ============================================================
     def _on_camera_change(self, event=None):
         if self.running:
@@ -78,10 +93,10 @@ class CameraCapture:
         cam_name = self.combo_var.get()
         self.camera_index = self.camera_map.get(cam_name, 0)
         self.start()
-    # 🟢 ENDE
+    #  ENDE
 
     # ============================================================
-    # 🎬 Start / Stop
+    #  Start / stop
     # ============================================================
     def start(self):
         if self.running:
@@ -102,7 +117,7 @@ class CameraCapture:
             self.cap.release()
 
     # ============================================================
-    # 🔁 Capture Loop
+    #  Capture Loop
     # ============================================================
     def _update_loop(self):
         while self.running and self.cap.isOpened():
@@ -113,7 +128,7 @@ class CameraCapture:
             time.sleep(1.0 / self.fps)
 
     # ============================================================
-    # 🖼️ Update Tkinter Preview
+    #  Update Tkinter Preview
     # ============================================================
     def _tk_update(self):
         if not self.running:
@@ -121,31 +136,34 @@ class CameraCapture:
         with self._lock:
             if self.frame is not None:
                 img = Image.fromarray(self.frame)
+                if self.preview_width > 0 and self.preview_height > 0:
+                    resampling = getattr(Image, "Resampling", Image)
+                    img = img.resize((int(self.preview_width), int(self.preview_height)), resampling.LANCZOS)
                 imgtk = ImageTk.PhotoImage(image=img)
                 self.label.imgtk = imgtk
                 self.label.configure(image=imgtk)
         self.master.after(33, self._tk_update)  # ~30 FPS UI Refresh
 
     # ============================================================
-    # 📤 Zugriff auf letzten Frame (z. B. für Board Detection)
+    #  Access latest frame (e.g., for board detection)
     # ============================================================
     def get_latest_frame(self):
         with self._lock:
             return None if self.frame is None else self.frame.copy()
 
     # ============================================================
-    # 🧱 UI-Helfer
+    #  UI-Helfer
     # ============================================================
     def get_frame(self):
         return self.ui_frame
 
 
 # ============================================================================================
-# 🧪 Testmodus – Standalone starten
+#  Test mode - start standalone
 # ============================================================================================
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("🧠 Vision – Camera Preview")
+    root.title(" Vision  Camera Preview")
     cam = CameraCapture(root)
     cam.get_frame().pack()
     cam.start()
