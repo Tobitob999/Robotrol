@@ -2,7 +2,7 @@ import json
 import os
 import sys
 
-DEFAULT_PROFILE = "EB300"
+DEFAULT_PROFILE = "Moveo"
 PROFILE_FILES = {
     "Moveo": "Moveo.json",
     "EB15_red": "EB15_red.json",

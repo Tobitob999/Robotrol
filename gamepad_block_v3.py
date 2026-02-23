@@ -515,6 +515,9 @@ def attach_gamepad_tab(tab_gamepad, client, execute_app):
         smooth = {ax: 0.0 for ax in AXES}
         gripper_pos = 0.0
         last_grip_time = 0.0
+        last_fixed_gp_time = 0.0
+        lt_fix_time = 0.0   # debounce for LT "fix from current"
+        rt_cycle_time = 0.0  # debounce for RT mode-cycle
 
         # Debounce for configurable buttons
         button_last_time = {key: 0.0 for key in BUTTON_ACTION_KEYS}
@@ -549,8 +552,15 @@ def attach_gamepad_tab(tab_gamepad, client, execute_app):
 
                 # Slow override disabled by default
                 speed_factor_override = 1.0
-                if lt > 0.3:  # LT slightly pressed -> slow mode
-                    speed_factor_override = 0.1
+                if lt > 0.1:
+                    speed_factor_override = 0.1  # LT pressed -> slow mode
+                if lt > 0.8:
+                    # Full press: fix from current TCP (one-shot, debounced)
+                    if now - lt_fix_time > 0.8:
+                        lt_fix_time = now
+                        if hasattr(execute_app, "fix_tcp_from_gamepad") and hasattr(execute_app, "after"):
+                            execute_app.after(0, execute_app.fix_tcp_from_gamepad)
+                            log(" LT  Fix from current TCP")
                 fixed_enabled_var = getattr(execute_app, "fixed_tcp_enabled", None)
                 fixed_enabled = bool(fixed_enabled_var.get()) if fixed_enabled_var else False
 
@@ -632,17 +642,14 @@ def attach_gamepad_tab(tab_gamepad, client, execute_app):
                         log(f" Gripper fine close -> M3 S{int(gripper_pos)}")
                         last_grip_time = now
 
-                # === RT (Right Trigger): aktuelle Pose als Nullpunkt (G92)
-                if rt > 0.8:  # strongly pressed
-                    if hasattr(execute_app, "manual_zero_current_pose"):
-                        execute_app.manual_zero_current_pose()
-                        log(" RT  Current pose set as zero reference (G92)")
-                    elif hasattr(execute_app, "do_zero"):
-                        execute_app.do_zero()
-                        log(" RT  Zero reference set (G92)")
-                    else:
-                        log(" RT  Zero function not available")
-                    time.sleep(0.5)  # debounce
+                # === RT (Right Trigger): Gamepad-Modus cyclen  0→1→2→0
+                if rt > 0.8 and now - rt_cycle_time > 0.5:
+                    rt_cycle_time = now
+                    if hasattr(execute_app, "set_gamepad_mode_cycle") and hasattr(execute_app, "gamepad_mode_cycle"):
+                        cur = int(execute_app.gamepad_mode_cycle.get())
+                        nxt = (cur + 1) % 3
+                        execute_app.after(0, execute_app.set_gamepad_mode_cycle, nxt)
+                        log(f" RT  Gamepad mode \u2192 {nxt}")
 
                 # === Configurable buttons: BACK/START ===
                 BACK_BTN, START_BTN = 6, 7
@@ -668,7 +675,7 @@ def attach_gamepad_tab(tab_gamepad, client, execute_app):
                             _do_action(button_actions.get("dpad_down", "none"))
                             button_last_time["dpad_down"] = now
 
-                # === GlGRIP CLOSEttung + Jog senden ===
+                # === Glättung + Jog senden ===
 
                 for ax in AXES:
                     target = float(jog.get(ax, 0.0))
@@ -679,6 +686,35 @@ def attach_gamepad_tab(tab_gamepad, client, execute_app):
                 fixed_enabled = bool(fixed_enabled_var.get()) if fixed_enabled_var else False
 
                 if fixed_enabled:
+                    gp_var = getattr(execute_app, "fixed_tcp_gamepad_mode", None)
+                    gp_mode = bool(gp_var.get()) if gp_var is not None else False
+                    if gp_mode and (now - last_fixed_gp_time >= poll_dt):
+                        _xy_step = 2.0
+                        _z_step = 1.0
+                        try:
+                            _v = getattr(execute_app, "fixed_tcp_gp_xy_step", None)
+                            if _v is not None:
+                                _xy_step = float(_v.get())
+                            _v = getattr(execute_app, "fixed_tcp_gp_z_step", None)
+                            if _v is not None:
+                                _z_step = float(_v.get())
+                        except Exception:
+                            pass
+                        _px = float(params["X"]["step"]) or 1.0
+                        _py = float(params["Y"]["step"]) or 1.0
+                        _pz = float(params["Z"]["step"]) or 1.0
+                        sdx = (smooth["X"] / _px) * _xy_step * spd_factor * speed_factor_override
+                        sdy = (smooth["Y"] / _py) * _xy_step * spd_factor * speed_factor_override
+                        sdz = -(smooth["Z"] / _pz) * _z_step * spd_factor * speed_factor_override
+                        if abs(sdx) > 0.001 or abs(sdy) > 0.001 or abs(sdz) > 0.001:
+                            gp_feed = int(
+                                map_speed_linear(int(execute_app.speed_val.get()))
+                                * spd_factor
+                                * speed_factor_override
+                            )
+                            if hasattr(execute_app, "after") and hasattr(execute_app, "move_fixed_tcp_gamepad"):
+                                execute_app.after(0, execute_app.move_fixed_tcp_gamepad, sdx, sdy, sdz, gp_feed)
+                        last_fixed_gp_time = now
                     time.sleep(poll_dt)
                     continue
                 else:
