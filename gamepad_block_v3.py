@@ -716,12 +716,14 @@ def attach_gamepad_tab(tab_gamepad, client, execute_app):
                                 execute_app.after(0, execute_app.move_fixed_tcp_gamepad, sdx, sdy, sdz, gp_feed)
                         last_fixed_gp_time = now
                     # C-axis (tool roll) via D-Pad left/right in fixed modes 1 & 2
+                    # Direct G91 relative move — bypasses IK, only rotates the tool axis
                     gp_cycle_var = getattr(execute_app, "gamepad_mode_cycle", None)
                     gp_cycle = int(gp_cycle_var.get()) if gp_cycle_var else 0
                     if gp_cycle in (1, 2) and hat[0] != 0:
                         c_delta = params["C"]["invert"] * params["C"]["step"] * hat[0]
-                        if hasattr(execute_app, "after") and hasattr(execute_app, "rotate_fixed_tcp_roll"):
-                            execute_app.after(0, execute_app.rotate_fixed_tcp_roll, c_delta)
+                        c_feed = int(map_speed_linear(int(execute_app.speed_val.get())) * spd_factor * speed_factor_override)
+                        client.send_line(f"G91 G1 C{c_delta:.3f} F{c_feed}")
+                        client.send_line("G90")
                     time.sleep(poll_dt)
                     continue
                 else:
