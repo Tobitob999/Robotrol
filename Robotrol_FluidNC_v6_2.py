@@ -1066,7 +1066,7 @@ class ExecuteApp(ttk.Frame):
         self.fixed_tcp_mode = tk.StringVar(value="world")
         self.fixed_tcp_point_dx = tk.DoubleVar(value=0.0)
         self.fixed_tcp_point_dy = tk.DoubleVar(value=0.0)
-        self.fixed_tcp_point_dz = tk.DoubleVar(value=0.0)
+        self.fixed_tcp_point_dz = tk.DoubleVar(value=100.0)
         self.fixed_tcp_point = None
         self.fixed_tcp_gamepad_mode = tk.BooleanVar(value=False)
         self.fixed_tcp_gp_xy_step = tk.DoubleVar(value=2.0)
@@ -1377,31 +1377,10 @@ class ExecuteApp(ttk.Frame):
                 return
 
             R = _rpy_to_R(roll, pitch, yaw)
+            # Use actual TCP rotation matrix columns directly (correct for any roll/pitch/yaw)
+            x_axis = (R[0][0], R[1][0], R[2][0])
+            y_axis = (R[0][1], R[1][1], R[2][1])
             z_axis = (R[0][2], R[1][2], R[2][2])
-            zn = (z_axis[0] ** 2 + z_axis[1] ** 2 + z_axis[2] ** 2) ** 0.5
-            if zn < 1e-9:
-                return
-            z_axis = (z_axis[0] / zn, z_axis[1] / zn, z_axis[2] / zn)
-
-            up = (0.0, 0.0, 1.0)
-            if abs(z_axis[2]) > 0.95:
-                up = (0.0, 1.0, 0.0)
-
-            x_axis = (
-                up[1] * z_axis[2] - up[2] * z_axis[1],
-                up[2] * z_axis[0] - up[0] * z_axis[2],
-                up[0] * z_axis[1] - up[1] * z_axis[0],
-            )
-            xn = (x_axis[0] ** 2 + x_axis[1] ** 2 + x_axis[2] ** 2) ** 0.5
-            if xn < 1e-9:
-                return
-            x_axis = (x_axis[0] / xn, x_axis[1] / xn, x_axis[2] / xn)
-
-            y_axis = (
-                z_axis[1] * x_axis[2] - z_axis[2] * x_axis[1],
-                z_axis[2] * x_axis[0] - z_axis[0] * x_axis[2],
-                z_axis[0] * x_axis[1] - z_axis[1] * x_axis[0],
-            )
 
             dxw = x_axis[0] * dxp + y_axis[0] * dyp + z_axis[0] * dzp
             dyw = x_axis[1] * dxp + y_axis[1] * dyp + z_axis[1] * dzp
@@ -1419,6 +1398,7 @@ class ExecuteApp(ttk.Frame):
 
         # Expose for external access (e.g. LT gamepad action)
         self._set_tcp_point_from_current_fn = _set_tcp_point_from_current
+        self._update_fixed_from_tcp_fn = _update_fixed_from_tcp
 
         btn_set_tcp_point = ttk.Button(
             row_point,
@@ -5061,6 +5041,8 @@ $Report/Startup     - Show startup file loaded at boot
         if mode == 0:
             if getattr(self, "fixed_tcp_gamepad_mode", None):
                 self.fixed_tcp_gamepad_mode.set(False)
+            if getattr(self, "fixed_tcp_enabled", None):
+                self.fixed_tcp_enabled.set(False)
         elif mode == 1:
             if getattr(self, "fixed_tcp_enabled", None):
                 self.fixed_tcp_enabled.set(True)
@@ -5084,26 +5066,46 @@ $Report/Startup     - Show startup file loaded at boot
     # GAMEPAD  Fix from current TCP  (LT full press)
     # ============================================================
     def fix_tcp_from_gamepad(self):
-        """LT: capture current TCP position as fixed reference & reset offsets."""
+        """LT: capture current TCP as fixed origin (same as GUI button) & optionally set Point."""
         mode = int(self.gamepad_mode_cycle.get()) if getattr(self, "gamepad_mode_cycle", None) else 0
-        # Reset XYZ offsets to zero
-        for var in ("fixed_tcp_dx", "fixed_tcp_dy", "fixed_tcp_dz"):
-            v = getattr(self, var, None)
-            if v is not None:
-                v.set(0.0)
+        # Call the same function as the GUI "Fix from current TCP" button
+        fn = getattr(self, "_update_fixed_from_tcp_fn", None)
+        if fn is not None:
+            try:
+                fn()
+            except Exception:
+                pass
         self._gp_tcp_prev_rpy = None
-        # In Point mode: also set the TCP point target from current position
+        # In Point mode: additionally set the TCP point target from current position
         if mode == 2:
-            fn = getattr(self, "_set_tcp_point_from_current_fn", None)
-            if fn is not None:
+            pt_fn = getattr(self, "_set_tcp_point_from_current_fn", None)
+            if pt_fn is not None:
                 try:
-                    fn()
+                    pt_fn()
                 except Exception:
                     pass
         try:
             self.log("[Gamepad] Fix from current TCP")
         except Exception:
             pass
+
+    # ============================================================
+    # GAMEPAD  Tool Roll  (D-Pad left/right in fixed modes 1 & 2)
+    # ============================================================
+    def rotate_fixed_tcp_roll(self, delta_deg: float):
+        """Increment fixed TCP roll angle and re-apply (tool rotation in fixed modes)."""
+        if not getattr(self, "fixed_tcp_enabled", None) or not self.fixed_tcp_enabled.get():
+            return
+        try:
+            cur_roll = float(self.fixed_tcp_roll.get())
+            self.fixed_tcp_roll.set(cur_roll + delta_deg)
+            if hasattr(self, "_fixed_tcp_apply_target"):
+                self._fixed_tcp_apply_target(execute=True)
+        except Exception as e:
+            try:
+                self.log(f"[Gamepad Roll] {e}")
+            except Exception:
+                pass
 
     # ============================================================
     # GAMEPAD  ExecuteApp Dispatcher
