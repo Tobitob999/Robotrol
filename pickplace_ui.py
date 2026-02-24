@@ -24,6 +24,7 @@ from simulation.simulation_loop import SimulationRunner
 class _CameraCaptureAdapter:
     def __init__(self, camera_capture):
         self._camera_capture = camera_capture
+        self.color_order = "rgb"
 
     def get_frame(self):
         image = None
@@ -77,6 +78,7 @@ class PickPlaceTab(ttk.Frame):
         self._marker_T_obj_vars = None
         self._board_points = {}
         self._board_point_vars = {}
+        self._board_square_points = {}
         self._cam_calib_objpoints = []
         self._cam_calib_imgpoints = []
         self._cam_calib_image_size = None
@@ -192,7 +194,31 @@ class PickPlaceTab(ttk.Frame):
         tabs.add(marker_tab, text="Marker-Obj")
         tabs.add(detect_tab, text="Perception")
 
-        self._build_base_cam_tab(base_tab)
+        # Base-Cam has many stacked frames – wrap in scrollable canvas so it
+        # doesn't force the outer Notebook (and main window) to grow vertically.
+        base_tab.columnconfigure(0, weight=1)
+        base_tab.rowconfigure(0, weight=1)
+        _bc_canvas = tk.Canvas(base_tab, highlightthickness=0, height=420)
+        _bc_vsb = ttk.Scrollbar(base_tab, orient="vertical", command=_bc_canvas.yview)
+        _bc_canvas.configure(yscrollcommand=_bc_vsb.set)
+        _bc_vsb.grid(row=0, column=1, sticky="ns")
+        _bc_canvas.grid(row=0, column=0, sticky="nsew")
+        base_inner = ttk.Frame(_bc_canvas)
+        _bc_win = _bc_canvas.create_window((0, 0), window=base_inner, anchor="nw")
+        base_inner.bind(
+            "<Configure>",
+            lambda e: _bc_canvas.configure(scrollregion=_bc_canvas.bbox("all")),
+        )
+        _bc_canvas.bind(
+            "<Configure>",
+            lambda e: _bc_canvas.itemconfigure(_bc_win, width=e.width),
+        )
+        _bc_canvas.bind(
+            "<MouseWheel>",
+            lambda e: _bc_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"),
+        )
+
+        self._build_base_cam_tab(base_inner)
         self._build_camera_tab(camera_tab)
         self._build_marker_tab(marker_tab)
         self._build_detect_tab(detect_tab)
@@ -212,12 +238,17 @@ class PickPlaceTab(ttk.Frame):
 
         btns = ttk.Frame(tab)
         btns.pack(anchor="w", padx=6, pady=4)
-        ttk.Button(btns, text="Load Config", command=self._load_calibration_into_ui).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Save Board Config", command=self._save_board_config).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Compute base_T_cam", command=self._compute_base_T_cam).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Save base_T_cam", command=self._save_base_T_cam).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Validate base_T_cam", command=self._validate_base_T_cam_once).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Simulate calibration", command=self._simulate_base_cam_noise).pack(side=tk.LEFT, padx=4)
+        btns_r1 = ttk.Frame(btns)
+        btns_r1.pack(anchor="w")
+        ttk.Button(btns_r1, text="Load Config", command=self._load_calibration_into_ui).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns_r1, text="Save Board Config", command=self._save_board_config).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns_r1, text="Compute base_T_cam", command=self._compute_base_T_cam).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns_r1, text="Save base_T_cam", command=self._save_base_T_cam).pack(side=tk.LEFT, padx=4)
+        btns_r2 = ttk.Frame(btns)
+        btns_r2.pack(anchor="w", pady=(2, 0))
+        ttk.Button(btns_r2, text="Validate base_T_cam", command=self._validate_base_T_cam_once).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns_r2, text="Simulate calibration", command=self._simulate_base_cam_noise).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns_r2, text="Test Board Moves", command=self._test_board_moves).pack(side=tk.LEFT, padx=4)
 
         grid = ttk.Frame(tab)
         grid.pack(fill="x", padx=6, pady=6)
@@ -270,6 +301,41 @@ class PickPlaceTab(ttk.Frame):
         ttk.Label(points, text="P2:").grid(row=2, column=0, sticky="w", padx=(0, 4))
         ttk.Label(points, textvariable=self._board_point_vars["p2"]).grid(row=2, column=1, sticky="w")
 
+        sq_frame = ttk.LabelFrame(tab, text="Square Fit (manual TCP)")
+        sq_frame.pack(fill="x", padx=6, pady=6)
+        self._square_name_var = tk.StringVar(value="e4")
+        ttk.Label(sq_frame, text="Square:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(sq_frame, textvariable=self._square_name_var, width=6).grid(row=0, column=1, sticky="w", padx=4, pady=2)
+        ttk.Button(sq_frame, text="Capture Square", command=self._capture_square_point, state=state).grid(
+            row=0, column=2, sticky="w", padx=4, pady=2
+        )
+        ttk.Button(sq_frame, text="Clear Squares", command=self._clear_square_points).grid(
+            row=0, column=3, sticky="w", padx=4, pady=2
+        )
+        ttk.Button(sq_frame, text="Fit base_T_board", command=self._fit_base_T_board_from_squares).grid(
+            row=0, column=4, sticky="w", padx=4, pady=2
+        )
+        ttk.Label(sq_frame, text="Capture 3+ squares for best fit.").grid(row=1, column=0, columnspan=5, sticky="w", padx=4, pady=(2, 4))
+
+        test_frame = ttk.LabelFrame(tab, text="Board Test Targets")
+        test_frame.pack(fill="x", padx=6, pady=6)
+        self._test_squares_var = tk.StringVar(value="a1 h1 a8 h8 e4 d5")
+        self._test_z_safe_var = tk.DoubleVar(value=80.0)
+        self._test_z_touch_var = tk.DoubleVar(value=10.0)
+        self._test_dry_run_var = tk.BooleanVar(value=True)
+        ttk.Label(test_frame, text="Squares (e.g. a1 h1 e4) or x,y(mm):").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(test_frame, textvariable=self._test_squares_var, width=40).grid(row=0, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(test_frame, text="Z safe:").grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(test_frame, textvariable=self._test_z_safe_var, width=8).grid(row=1, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(test_frame, text="Z touch:").grid(row=2, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(test_frame, textvariable=self._test_z_touch_var, width=8).grid(row=2, column=1, sticky="w", padx=4, pady=2)
+        ttk.Checkbutton(test_frame, text="Dry run (no motion)", variable=self._test_dry_run_var).grid(
+            row=3, column=0, sticky="w", padx=4, pady=(2, 2)
+        )
+        ttk.Label(test_frame, text="Use this to verify calibration/kinematics before pick.").grid(
+            row=4, column=0, columnspan=2, sticky="w", padx=4, pady=(2, 4)
+        )
+
     def _build_camera_tab(self, tab):
         tab.columnconfigure(0, weight=1)
         info = ttk.Label(tab, text="Calibrate camera intrinsics using the same chessboard pattern.")
@@ -312,6 +378,25 @@ class PickPlaceTab(ttk.Frame):
         for var in self._board_point_vars.values():
             var.set("not set")
         self._log("Board points cleared.")
+
+    def _capture_square_point(self):
+        try:
+            name = (self._square_name_var.get() or "").strip().lower()
+            if len(name) < 2:
+                raise RuntimeError("Square name required (e.g. e4).")
+            file_ch = name[0]
+            rank_ch = name[1]
+            if file_ch < "a" or file_ch > "h" or not rank_ch.isdigit() or not (1 <= int(rank_ch) <= 8):
+                raise RuntimeError("Square must be a1..h8.")
+            point = self._get_tcp_position_mm()
+            self._board_square_points[name[:2]] = point
+            self._log(f"Square {name} captured at {point}.")
+        except Exception as exc:
+            self._log(f"Capture square failed: {exc}")
+
+    def _clear_square_points(self):
+        self._board_square_points = {}
+        self._log("Square points cleared.")
 
     def _compute_base_T_board_from_points(self):
         try:
@@ -356,6 +441,149 @@ class PickPlaceTab(ttk.Frame):
             self._log(f"base_T_board computed. err_x={err1:.2f} mm err_y={err2:.2f} mm")
         except Exception as exc:
             self._log(f"Compute base_T_board failed: {exc}")
+
+    def _fit_base_T_board_from_squares(self):
+        try:
+            if len(self._board_square_points) < 3:
+                raise RuntimeError("Capture at least 3 squares.")
+            cols = int(self._pattern_cols_var.get())
+            rows = int(self._pattern_rows_var.get())
+            square = float(self._square_size_var.get())
+            if cols < 2 or rows < 2:
+                raise RuntimeError("Pattern size must be at least 2x2.")
+
+            import numpy as np
+
+            board_pts = []
+            base_pts = []
+            for name, base_pt in self._board_square_points.items():
+                file_ch = name[0]
+                rank = int(name[1])
+                x, y = self._board_square_center(file_ch, rank)
+                board_pts.append([x, y, 0.0])
+                base_pts.append(list(base_pt))
+            B = np.array(board_pts, dtype=np.float64)
+            A = np.array(base_pts, dtype=np.float64)
+
+            # Kabsch: find R,t that maps B -> A
+            B_cent = B.mean(axis=0)
+            A_cent = A.mean(axis=0)
+            B0 = B - B_cent
+            A0 = A - A_cent
+            H = B0.T @ A0
+            U, S, Vt = np.linalg.svd(H)
+            R = Vt.T @ U.T
+            if np.linalg.det(R) < 0:
+                Vt[2, :] *= -1
+                R = Vt.T @ U.T
+            t = A_cent - R @ B_cent
+
+            base_T_board = [
+                [float(R[0, 0]), float(R[0, 1]), float(R[0, 2]), float(t[0])],
+                [float(R[1, 0]), float(R[1, 1]), float(R[1, 2]), float(t[1])],
+                [float(R[2, 0]), float(R[2, 1]), float(R[2, 2]), float(t[2])],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+            self._set_matrix_vars(self._base_T_board_vars, base_T_board)
+
+            # RMS error
+            B_fit = (R @ B.T).T + t
+            err = np.linalg.norm(B_fit - A, axis=1).mean()
+            self._log(f"base_T_board fit from squares. avg_err={err:.2f} mm")
+        except Exception as exc:
+            self._log(f"Fit base_T_board failed: {exc}")
+
+    def _parse_board_targets(self, text):
+        tokens = [t.strip() for t in (text or "").replace(";", " ").split() if t.strip()]
+        out = []
+        for tok in tokens:
+            if "," in tok:
+                parts = tok.split(",")
+                if len(parts) >= 2:
+                    try:
+                        out.append(("xy", float(parts[0]), float(parts[1])))
+                        continue
+                    except Exception:
+                        pass
+            if len(tok) >= 2:
+                file_ch = tok[0].lower()
+                rank_ch = tok[1]
+                if "a" <= file_ch <= "h" and rank_ch.isdigit():
+                    out.append(("sq", file_ch, int(rank_ch)))
+        return out
+
+    def _board_square_center(self, file_ch, rank):
+        cols = int(self._pattern_cols_var.get())
+        rows = int(self._pattern_rows_var.get())
+        square = float(self._square_size_var.get())
+        if cols < 2 or rows < 2:
+            raise RuntimeError("Pattern size must be at least 2x2.")
+        file_idx = ord(file_ch) - ord("a")
+        rank_idx = int(rank) - 1
+        if file_idx < 0 or file_idx > 7 or rank_idx < 0 or rank_idx > 7:
+            raise RuntimeError("Square out of range.")
+        x = (file_idx + 0.5) * square
+        y = (rank_idx + 0.5) * square
+        return x, y
+
+    def _board_to_base(self, x_mm, y_mm, z_mm):
+        base_T_board = self._read_matrix_vars(self._base_T_board_vars)
+        T = make_transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [x_mm, y_mm, z_mm])
+        base_T = matmul(base_T_board, T)
+        return [base_T[0][3], base_T[1][3], base_T[2][3]]
+
+    def _test_board_moves(self):
+        def _task():
+            try:
+                if self._execute_app is None or not hasattr(self._execute_app, "kinematics_tabs"):
+                    raise RuntimeError("Kinematics UI not available")
+                self._ensure_pipeline()
+                targets = self._parse_board_targets(self._test_squares_var.get())
+                if not targets:
+                    raise RuntimeError("No test targets specified.")
+                z_safe = float(self._test_z_safe_var.get())
+                z_touch = float(self._test_z_touch_var.get())
+                dry_run = bool(self._test_dry_run_var.get())
+                roll, pitch, yaw = self._current_rpy()
+                feed = self._get_speed_slider_feed(60.0)
+                self._log(f"Board test dry_run={dry_run} z_safe={z_safe} z_touch={z_touch}")
+                for item in targets:
+                    if item[0] == "xy":
+                        x_mm, y_mm = item[1], item[2]
+                    else:
+                        x_mm, y_mm = self._board_square_center(item[1], item[2])
+                    p_safe = self._board_to_base(x_mm, y_mm, z_safe)
+                    p_touch = self._board_to_base(x_mm, y_mm, z_touch)
+                    self._log(f"Test target {item}: base_safe={p_safe} base_touch={p_touch}")
+                    preview_safe = self._execute_app.kinematics_tabs.preview_tcp_gcode(
+                        p_safe[0], p_safe[1], p_safe[2], roll, pitch, yaw, feed=feed
+                    )
+                    if not preview_safe or not preview_safe.get("ok", False):
+                        raise RuntimeError(f"Preview failed for safe target: {preview_safe}")
+                    preview_touch = self._execute_app.kinematics_tabs.preview_tcp_gcode(
+                        p_touch[0], p_touch[1], p_touch[2], roll, pitch, yaw, feed=feed
+                    )
+                    if not preview_touch or not preview_touch.get("ok", False):
+                        raise RuntimeError(f"Preview failed for touch target: {preview_touch}")
+                    self._log(f"Preview safe: {preview_safe.get('gcode')}")
+                    self._log(f"Preview touch: {preview_touch.get('gcode')}")
+                    if not dry_run:
+                        ok = self._execute_app.kinematics_tabs.move_tcp_pose(
+                            p_safe[0], p_safe[1], p_safe[2], roll, pitch, yaw, feed=feed
+                        )
+                        if not ok:
+                            raise RuntimeError("Move to safe failed")
+                        self._wait_for_idle()
+                        ok = self._execute_app.kinematics_tabs.move_tcp_pose(
+                            p_touch[0], p_touch[1], p_touch[2], roll, pitch, yaw, feed=feed
+                        )
+                        if not ok:
+                            raise RuntimeError("Move to touch failed")
+                        self._wait_for_idle()
+                self._log("Board test moves complete.")
+            except Exception as exc:
+                self._log(f"Board test moves failed: {exc}")
+        self._start_worker(_task)
 
     def _reset_camera_calib(self):
         self._cam_calib_objpoints = []
@@ -980,6 +1208,7 @@ class PickPlaceTab(ttk.Frame):
                 )
                 self._detect_var.set(msg)
                 self._log(f"Detect ok: {msg}")
+                self._update_detection_overlay()
             except Exception as exc:
                 self._detect_var.set(f"Detect failed: {exc}")
                 self._log(f"Detect failed: {exc}")
@@ -1144,12 +1373,19 @@ class PickPlaceTab(ttk.Frame):
                 self._attach_camera_capture()
 
                 pose = self._pipeline.context.perception.detect_object_pose()
+                self._update_detection_overlay()
                 cube_cfg = self._configs.get("cube", {})
                 obj_pos = extract_translation(pose.matrix)
+                self._check_calibration_sanity(obj_pos)
+                normal = self._resolve_grasp_normal(cube_cfg)
+                base_T_cam = None
+                try:
+                    base_T_cam = getattr(self._pipeline.context.perception, "base_T_cam", None)
+                except Exception:
+                    base_T_cam = None
                 grasp_offset = float(cube_cfg.get("grasp_offset_mm", 0.0))
                 approach_dist = float(cube_cfg.get("approach_distance_mm", 0.0))
                 lift_dist = float(cube_cfg.get("lift_distance_mm", 0.0))
-                normal = [0.0, 0.0, 1.0]  # always approach vertically from above
                 grasp_pos = [
                     obj_pos[0] + normal[0] * grasp_offset,
                     obj_pos[1] + normal[1] * grasp_offset,
@@ -1165,6 +1401,14 @@ class PickPlaceTab(ttk.Frame):
                     grasp_pos[1],
                     grasp_pos[2] + lift_dist,
                 ]
+                self._log(
+                    f"Pick plan: obj={obj_pos} approach={approach_pos} grasp={grasp_pos} lift={lift_pos}"
+                )
+                if base_T_cam:
+                    self._log(f"base_T_cam: {base_T_cam}")
+                for label, p in [("approach", approach_pos), ("grasp", grasp_pos), ("lift", lift_pos)]:
+                    if not self._check_workspace_bounds(p, label=label):
+                        raise RuntimeError(f"Workspace check failed for {label} target")
 
                 robot_cfg = self._configs.get("robot", {})
                 base_feed = self._get_speed_slider_feed(float(robot_cfg.get("approach_speed", 60.0)))
@@ -1208,6 +1452,7 @@ class PickPlaceTab(ttk.Frame):
                     )
 
                 self._execute_app.send_now("M3 S0")
+                time.sleep(0.5)  # post-gripper-open: wait for servo to fully open
                 slow_feed = 300.0
                 if not _move_pos_split(approach_pos, approach_feed, slow_feed):
                     raise RuntimeError("Approach move failed")
@@ -1222,6 +1467,105 @@ class PickPlaceTab(ttk.Frame):
             except Exception as exc:
                 self._log(f"Pick up test failed: {exc}")
         self._start_worker(_task)
+
+    def _resolve_grasp_normal(self, cube_cfg):
+        axis = str(cube_cfg.get("grasp_normal_axis", "z")).strip().lower()
+        sign = float(cube_cfg.get("grasp_normal_sign", 1.0))
+        sign = 1.0 if sign >= 0 else -1.0
+        if axis == "x":
+            return [1.0 * sign, 0.0, 0.0]
+        if axis == "y":
+            return [0.0, 1.0 * sign, 0.0]
+        return [0.0, 0.0, 1.0 * sign]
+
+    def _check_board_bounds(self, pos, margin_mm=20.0, z_tol_mm=80.0):
+        try:
+            calib = self._configs.get("calibration", {})
+            pattern = calib.get("board_pattern", {})
+            cols = int(pattern.get("pattern_size", [0, 0])[0])
+            rows = int(pattern.get("pattern_size", [0, 0])[1])
+            square = float(pattern.get("square_size_mm", 0.0))
+            base_T_board = calib.get("base_T_board")
+            if not (cols and rows and square and base_T_board):
+                return True
+            board_w = (cols - 1) * square
+            board_h = (rows - 1) * square
+            p = [float(pos[0]), float(pos[1]), float(pos[2])]
+            p_board = matmul(invert_transform(base_T_board), make_transform([[1,0,0],[0,1,0],[0,0,1]], p))
+            bx, by, bz = p_board[0][3], p_board[1][3], p_board[2][3]
+            self._log(f"Board coords: x={bx:.2f} y={by:.2f} z={bz:.2f}")
+            if bx < -margin_mm or bx > board_w + margin_mm:
+                return False
+            if by < -margin_mm or by > board_h + margin_mm:
+                return False
+            if abs(bz) > z_tol_mm:
+                return False
+            return True
+        except Exception:
+            return True
+
+    def _check_workspace_bounds(self, pos, label="target"):
+        try:
+            robot_cfg = self._configs.get("robot", {})
+            ws = robot_cfg.get("workspace", {})
+            if not bool(ws.get("enabled", False)):
+                return True
+            margin = float(ws.get("margin_mm", 0.0))
+            x_min, x_max = ws.get("x", [None, None])
+            y_min, y_max = ws.get("y", [None, None])
+            z_min, z_max = ws.get("z", [None, None])
+            x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
+            if x_min is not None and x < float(x_min) - margin:
+                self._log(f"Workspace: {label} x={x:.2f} < {x_min}")
+                return False
+            if x_max is not None and x > float(x_max) + margin:
+                self._log(f"Workspace: {label} x={x:.2f} > {x_max}")
+                return False
+            if y_min is not None and y < float(y_min) - margin:
+                self._log(f"Workspace: {label} y={y:.2f} < {y_min}")
+                return False
+            if y_max is not None and y > float(y_max) + margin:
+                self._log(f"Workspace: {label} y={y:.2f} > {y_max}")
+                return False
+            if z_min is not None and z < float(z_min) - margin:
+                self._log(f"Workspace: {label} z={z:.2f} < {z_min}")
+                return False
+            if z_max is not None and z > float(z_max) + margin:
+                self._log(f"Workspace: {label} z={z:.2f} > {z_max}")
+                return False
+            return True
+        except Exception:
+            return True
+
+    def _check_calibration_sanity(self, obj_pos):
+        if not self._check_board_bounds(obj_pos):
+            raise RuntimeError("Detected pose outside board bounds (calibration mismatch)")
+        try:
+            base_T_cam = None
+            if self._pipeline is not None:
+                base_T_cam = getattr(self._pipeline.context.perception, "base_T_cam", None)
+            if not base_T_cam:
+                raise RuntimeError("base_T_cam missing")
+            R = [row[:3] for row in base_T_cam[:3]]
+            # Orthonormal check (R^T R ≈ I) and det ~ 1
+            rt = [[R[0][0], R[1][0], R[2][0]],
+                  [R[0][1], R[1][1], R[2][1]],
+                  [R[0][2], R[1][2], R[2][2]]]
+            def dot(a, b):
+                return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+            cols = [rt[0], rt[1], rt[2]]
+            ortho_err = abs(dot(cols[0], cols[1])) + abs(dot(cols[0], cols[2])) + abs(dot(cols[1], cols[2]))
+            det = (
+                R[0][0]*(R[1][1]*R[2][2]-R[1][2]*R[2][1]) -
+                R[0][1]*(R[1][0]*R[2][2]-R[1][2]*R[2][0]) +
+                R[0][2]*(R[1][0]*R[2][1]-R[1][1]*R[2][0])
+            )
+            if ortho_err > 0.05 or abs(det - 1.0) > 0.05:
+                self._log(f"base_T_cam sanity: ortho_err={ortho_err:.3f} det={det:.3f}")
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
 
     def _ui(self, fn):
         self.after(0, fn)
@@ -1290,7 +1634,47 @@ class PickPlaceTab(ttk.Frame):
         if self._camera_capture is None:
             return
         try:
+            current = getattr(self._pipeline.context.perception, "camera", None)
+            restart_needed = False
+            if current is not None and current is not self._camera_capture:
+                cap = getattr(current, "cap", None)
+                if cap is not None:
+                    try:
+                        cap.release()
+                        restart_needed = True
+                    except Exception:
+                        pass
             self._pipeline.context.perception.camera = _CameraCaptureAdapter(self._camera_capture)
+            try:
+                running = bool(getattr(self._camera_capture, "running", False))
+                if restart_needed and running:
+                    self._camera_capture.stop()
+                    self._camera_capture.start()
+                elif not running:
+                    self._camera_capture.start()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _update_detection_overlay(self):
+        try:
+            if self._camera_capture is None:
+                return
+            image = self._camera_capture.get_latest_frame()
+            if image is None:
+                return
+            import cv2
+            from perception.tnt_detector import detect_tnt_contour
+            tnt_cfg = self._configs.get("tnt", {}) if self._configs else {}
+            cnt, bgr = detect_tnt_contour(image, tnt_cfg, camera=_CameraCaptureAdapter(self._camera_capture))
+            if bgr is None:
+                return
+            if cnt is not None:
+                cv2.drawContours(bgr, [cnt], -1, (255, 0, 0), 2)
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            if self._execute_app is not None and hasattr(self._execute_app, "board_detector"):
+                self._execute_app.board_detector.last_vis = rgb
         except Exception:
             pass
 
@@ -1498,11 +1882,22 @@ class PickPlaceTab(ttk.Frame):
             image = self._camera_capture.get_latest_frame()
             if image is not None:
                 return image, "rgb"
+            raise RuntimeError("Camera capture not running or no frame available")
         camera = None
         if self._pipeline is not None:
             camera = self._pipeline.context.perception.camera
         if camera is None:
             from perception.camera import build_camera
             camera = build_camera(cam_cfg)
-        frame = camera.get_frame()
-        return frame.image, "bgr"
+        frame = None
+        try:
+            frame = camera.get_frame()
+            color_order = getattr(camera, "color_order", "bgr")
+            return frame.image, color_order
+        finally:
+            cap = getattr(camera, "cap", None)
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass

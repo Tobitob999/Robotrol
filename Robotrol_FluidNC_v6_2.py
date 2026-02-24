@@ -124,8 +124,8 @@ PROJECT_FLAGS = _load_project_flags()
 def _load_camera_config():
     default = {
         "device_index": 0,
-        "width": 1920,
-        "height": 1080,
+        "width": 640,
+        "height": 480,
         "fps": 30,
     }
     try:
@@ -188,6 +188,7 @@ class SerialClient:
             "supports_endstops": True,
             "supports_ota": True,
             "supports_axis_homing": True,   # $HX/$HY/...
+            "supports_global_homing": True, # $H
             "supports_softlimits": True,
         },
         "grbl": {
@@ -195,6 +196,7 @@ class SerialClient:
             "supports_endstops": False,     # no Pn:
             "supports_ota": False,
             "supports_axis_homing": False,  # only $H
+            "supports_global_homing": True, # $H
             "supports_softlimits": True,
         },
         "custom": {
@@ -202,6 +204,7 @@ class SerialClient:
             "supports_endstops": False,
             "supports_ota": False,
             "supports_axis_homing": False,
+            "supports_global_homing": True,
             "supports_softlimits": False,
         },
     }
@@ -268,8 +271,18 @@ class SerialClient:
         return self.backend_caps.get("supports_axis_homing", False)
 
     @property
+    def supports_global_homing(self) -> bool:
+        return self.backend_caps.get("supports_global_homing", True)
+
+    @property
     def supports_softlimits(self) -> bool:
         return self.backend_caps.get("supports_softlimits", False)
+
+    def status_query_line(self) -> str:
+        """Return the status query for the active backend."""
+        if self.backend_type == "custom":
+            return "(TM)"
+        return "?"
 
     # ------------------------------------------------------------
     #  Central status parsing function (for TCP panel, etc.)
@@ -371,7 +384,7 @@ class SerialClient:
 
             #  Jetzt die erste echte Anfrage
             self.send_line("$$")
-            self.send_line("(TM)")
+            self.send_line(self.status_query_line())
 
         except Exception as e:
             self.ser = None
@@ -544,14 +557,9 @@ try:
     style.configure("Horizontal.TScale", background=light_bg)
     root.configure(bg=light_bg)
 
-    current_theme = {"dark": False}
-
 except Exception as e:
     print("[Warn]", e)
 
-except Exception as e:
-    print("[Warn]", e)
-# ===  Umschaltung Dark/Light Mode ===
 current_theme = {"dark": False}  # keep state (mutable for closure)
 
 def toggle_theme():
@@ -645,6 +653,11 @@ def connect():
         client.connect(port, baud)
         conn_lbl.configure(text="Connected", foreground="#2e7d32")
         print(f"[INFO] Connected to {port} @ {baud} Backend={client.backend_type}")
+        if "execute_app" in globals():
+            try:
+                execute_app._apply_profile_runtime_flags(log_note=False)
+            except Exception:
+                pass
     except Exception as e:
         conn_lbl.configure(text="Disconnected", foreground="#b71c1c")
         print("[ERROR] Connect:", e)
@@ -723,6 +736,13 @@ combo_profile.bind("<<ComboboxSelected>>", _on_profile_select)
 conn_lbl = ttk.Label(top, text="Disconnected",
                      foreground="#b71c1c", width=14, anchor="e")
 conn_lbl.pack(side=tk.RIGHT, padx=8)
+
+# --- Gamepad-Modus-Anzeige (wird von ExecuteApp.set_gamepad_mode_cycle aktualisiert) ---
+_gp_mode_var = tk.StringVar(value="GP: Normal")
+_gp_mode_lbl = tk.Label(top, textvariable=_gp_mode_var,
+                         bg="#455a64", fg="white", padx=7, pady=2,
+                         font=("", 8, "bold"), relief="flat", cursor="hand2")
+_gp_mode_lbl.pack(side=tk.RIGHT, padx=(2, 4))
 # --- Run initial port scan ---
 refresh_ports()
 # Execute App
@@ -750,6 +770,11 @@ class ExecuteApp(ttk.Frame):
         self.vision_right_enabled = tk.BooleanVar(value=False)
         self.hw_limits = {}  # soft max (0..max) per axis from $$
         self._vis_skip_kin = False
+        # Gamepad multi-mode (0=Normal, 1=Fixed/Tool, 2=Fixed/Point); cycled via RT
+        self.gamepad_mode_cycle = tk.IntVar(value=0)
+        self._gp_tcp_prev_rpy = None  # RPY continuity cache for Point mode
+        # Max XYZ offset distance for fixed TCP gamepad (editable)
+        self.fixed_tcp_max_dist = tk.DoubleVar(value=300.0)
         self.profile_name = profile_name
         self.profile_data = profile_data if isinstance(profile_data, dict) else {"name": profile_name, "version": 1}
         self.profile_has_endstops = _profile_has_endstops(self.profile_name, self.profile_data)
@@ -900,18 +925,18 @@ class ExecuteApp(ttk.Frame):
         self.cam = CameraCapture(
             vision_wrap,
             camera_index=int(cam_cfg.get("device_index", 0)),
-            width=int(cam_cfg.get("width", 1920)),
-            height=int(cam_cfg.get("height", 1080)),
+            width=int(cam_cfg.get("width", 640)),
+            height=int(cam_cfg.get("height", 480)),
             fps=int(cam_cfg.get("fps", 30)),
-            preview_width=420,
-            preview_height=320,
+            preview_width=300,
+            preview_height=225,
         )
         self.board_detector = BoardPose(
             vision_wrap,
             self.cam,
             pattern_size=(7, 7),
-            preview_width=420,
-            preview_height=320,
+            preview_width=300,
+            preview_height=225,
         )
 
         # Side by side with top-edge alignment
@@ -1041,8 +1066,11 @@ class ExecuteApp(ttk.Frame):
         self.fixed_tcp_mode = tk.StringVar(value="world")
         self.fixed_tcp_point_dx = tk.DoubleVar(value=0.0)
         self.fixed_tcp_point_dy = tk.DoubleVar(value=0.0)
-        self.fixed_tcp_point_dz = tk.DoubleVar(value=0.0)
+        self.fixed_tcp_point_dz = tk.DoubleVar(value=100.0)
         self.fixed_tcp_point = None
+        self.fixed_tcp_gamepad_mode = tk.BooleanVar(value=False)
+        self.fixed_tcp_gp_xy_step = tk.DoubleVar(value=2.0)
+        self.fixed_tcp_gp_z_step = tk.DoubleVar(value=1.0)
         self._vis_path_fixed = []
         self._vis_path_kin = []
         self._vis_fixed_frame = None
@@ -1256,6 +1284,42 @@ class ExecuteApp(ttk.Frame):
         )
         chk_tcp_gcode.grid(row=0, column=2, sticky="w")
 
+        chk_gamepad_ctrl = ttk.Checkbutton(
+            row_opts,
+            text="Gamepad XYZ",
+            variable=self.fixed_tcp_gamepad_mode,
+        )
+        chk_gamepad_ctrl.grid(row=1, column=0, sticky="w")
+        fixed_mode_widgets.append(chk_gamepad_ctrl)
+
+        gp_sens_frame = ttk.Frame(row_opts)
+        gp_sens_frame.grid(row=1, column=1, columnspan=2, sticky="w")
+        ttk.Label(gp_sens_frame, text="L\u2192XY:", foreground="gray").pack(side=tk.LEFT, padx=(0, 2))
+        ent_gp_xy = ttk.Entry(gp_sens_frame, textvariable=self.fixed_tcp_gp_xy_step, width=5, justify="right")
+        ent_gp_xy.pack(side=tk.LEFT)
+        ttk.Label(gp_sens_frame, text="mm  R\u2192Z:", foreground="gray").pack(side=tk.LEFT, padx=(4, 2))
+        ent_gp_z = ttk.Entry(gp_sens_frame, textvariable=self.fixed_tcp_gp_z_step, width=5, justify="right")
+        ent_gp_z.pack(side=tk.LEFT)
+        ttk.Label(gp_sens_frame, text="mm", foreground="gray").pack(side=tk.LEFT, padx=(2, 6))
+        ttk.Label(gp_sens_frame, text="Max±:", foreground="gray").pack(side=tk.LEFT, padx=(4, 2))
+        ent_max_dist = ttk.Entry(gp_sens_frame, textvariable=self.fixed_tcp_max_dist, width=5, justify="right")
+        ent_max_dist.pack(side=tk.LEFT)
+        ttk.Label(gp_sens_frame, text="mm", foreground="gray").pack(side=tk.LEFT, padx=(2, 6))
+        fixed_mode_widgets.extend([ent_gp_xy, ent_gp_z, ent_max_dist])
+
+        def _gp_test_go():
+            if not self.fixed_tcp_enabled.get():
+                return
+            try:
+                step = max(0.1, float(self.fixed_tcp_gp_xy_step.get()))
+            except Exception:
+                step = 1.0
+            _move_rel(step, 0.0, 0.0)
+
+        btn_gp_test = ttk.Button(gp_sens_frame, text="Test \u25b6", command=_gp_test_go)
+        btn_gp_test.pack(side=tk.LEFT)
+        fixed_mode_widgets.append(btn_gp_test)
+
         row_mode = ttk.Frame(fixed_wrap)
         row_mode.pack(fill=tk.X, padx=4, pady=(2, 2))
         ttk.Label(row_mode, text="Mode:").pack(side=tk.LEFT, padx=(0, 6))
@@ -1284,6 +1348,9 @@ class ExecuteApp(ttk.Frame):
         rb_point.pack(side=tk.LEFT)
         fixed_mode_widgets.append(rb_point)
 
+        gp_point_lbl = ttk.Label(row_mode, text="", foreground="#1565c0")
+        gp_point_lbl.pack(side=tk.LEFT, padx=(12, 0))
+
         row_point = ttk.Frame(fixed_wrap)
         row_point.pack(fill=tk.X, padx=4, pady=(2, 2))
         ttk.Label(row_point, text="Point dX").pack(side=tk.LEFT, padx=(0, 2))
@@ -1310,31 +1377,10 @@ class ExecuteApp(ttk.Frame):
                 return
 
             R = _rpy_to_R(roll, pitch, yaw)
+            # Use actual TCP rotation matrix columns directly (correct for any roll/pitch/yaw)
+            x_axis = (R[0][0], R[1][0], R[2][0])
+            y_axis = (R[0][1], R[1][1], R[2][1])
             z_axis = (R[0][2], R[1][2], R[2][2])
-            zn = (z_axis[0] ** 2 + z_axis[1] ** 2 + z_axis[2] ** 2) ** 0.5
-            if zn < 1e-9:
-                return
-            z_axis = (z_axis[0] / zn, z_axis[1] / zn, z_axis[2] / zn)
-
-            up = (0.0, 0.0, 1.0)
-            if abs(z_axis[2]) > 0.95:
-                up = (0.0, 1.0, 0.0)
-
-            x_axis = (
-                up[1] * z_axis[2] - up[2] * z_axis[1],
-                up[2] * z_axis[0] - up[0] * z_axis[2],
-                up[0] * z_axis[1] - up[1] * z_axis[0],
-            )
-            xn = (x_axis[0] ** 2 + x_axis[1] ** 2 + x_axis[2] ** 2) ** 0.5
-            if xn < 1e-9:
-                return
-            x_axis = (x_axis[0] / xn, x_axis[1] / xn, x_axis[2] / xn)
-
-            y_axis = (
-                z_axis[1] * x_axis[2] - z_axis[2] * x_axis[1],
-                z_axis[2] * x_axis[0] - z_axis[0] * x_axis[2],
-                z_axis[0] * x_axis[1] - z_axis[1] * x_axis[0],
-            )
 
             dxw = x_axis[0] * dxp + y_axis[0] * dyp + z_axis[0] * dzp
             dyw = x_axis[1] * dxp + y_axis[1] * dyp + z_axis[1] * dzp
@@ -1349,6 +1395,10 @@ class ExecuteApp(ttk.Frame):
             self.fixed_tcp_point = (x, y, z)
             if hasattr(self, "log"):
                 self.log(f"TCP Point set to ({x:.2f}, {y:.2f}, {z:.2f}).")
+
+        # Expose for external access (e.g. LT gamepad action)
+        self._set_tcp_point_from_current_fn = _set_tcp_point_from_current
+        self._update_fixed_from_tcp_fn = _update_fixed_from_tcp
 
         btn_set_tcp_point = ttk.Button(
             row_point,
@@ -1388,7 +1438,11 @@ class ExecuteApp(ttk.Frame):
                 val = float(v)
             except Exception:
                 val = 0.0
-            return max(-200.0, min(200.0, val))
+            try:
+                lim = max(10.0, float(self.fixed_tcp_max_dist.get()))
+            except Exception:
+                lim = 300.0
+            return max(-lim, min(lim, val))
 
         def _get_fixed_origin():
             return (
@@ -1698,6 +1752,7 @@ class ExecuteApp(ttk.Frame):
                 return True
             return False
         self._fixed_tcp_apply_target = _apply_fixed_target
+        self._fixed_tcp_calc_target = _calc_fixed_target
 
         def _sync_entry(entry, var):
             entry.delete(0, tk.END)
@@ -1736,7 +1791,7 @@ class ExecuteApp(ttk.Frame):
             row = ttk.Frame(parent)
             row.pack(fill=tk.X, pady=2)
             ttk.Label(row, text=label, width=6).pack(side=tk.LEFT)
-            scale = ttk.Scale(row, from_=-200.0, to=200.0, variable=var, length=170)
+            scale = ttk.Scale(row, from_=-300.0, to=300.0, variable=var, length=170)
             scale.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
             ent = ttk.Entry(row, width=7, justify="right")
             ent.pack(side=tk.LEFT, padx=(4, 0))
@@ -1949,67 +2004,6 @@ class ExecuteApp(ttk.Frame):
         _bind_plane(xz, "X", "Z")
         _bind_plane(yz, "Y", "Z")
 
-        def _update_plane_markers():
-            dx = _clamp_offset(self.fixed_tcp_dx.get())
-            dy = _clamp_offset(self.fixed_tcp_dy.get())
-            dz = _clamp_offset(self.fixed_tcp_dz.get())
-
-            def _pos(a, b):
-                px = center + (a / radius_mm) * radius_px
-                py = center - (b / radius_mm) * radius_px
-                return px, py
-
-            px, py = _pos(dx, dy)
-            xy.coords(xy_dot, px - 4, py - 4, px + 4, py + 4)
-
-            px, py = _pos(dx, dz)
-            xz.coords(xz_dot, px - 4, py - 4, px + 4, py + 4)
-
-            px, py = _pos(dy, dz)
-            yz.coords(yz_dot, px - 4, py - 4, px + 4, py + 4)
-
-        def _set_from_event(event, a_axis, b_axis):
-            dx_px = event.x - center
-            dy_px = center - event.y
-            r = (dx_px ** 2 + dy_px ** 2) ** 0.5
-            if r > radius_px and r > 1e-6:
-                scale = radius_px / r
-                dx_px *= scale
-                dy_px *= scale
-            a = (dx_px / radius_px) * radius_mm
-            b = (dy_px / radius_px) * radius_mm
-            if a_axis == "X":
-                self.fixed_tcp_dx.set(a)
-            elif a_axis == "Y":
-                self.fixed_tcp_dy.set(a)
-            elif a_axis == "Z":
-                self.fixed_tcp_dz.set(a)
-            if b_axis == "X":
-                self.fixed_tcp_dx.set(b)
-            elif b_axis == "Y":
-                self.fixed_tcp_dy.set(b)
-            elif b_axis == "Z":
-                self.fixed_tcp_dz.set(b)
-            _update_plane_markers()
-
-        def _bind_plane(canvas, a_axis, b_axis):
-            def _on_drag(event):
-                self.fixed_tcp_user_dragging = True
-                _set_from_event(event, a_axis, b_axis)
-
-            def _on_release(event):
-                _set_from_event(event, a_axis, b_axis)
-                self.fixed_tcp_user_dragging = False
-                if self.fixed_tcp_exec_on_release.get():
-                    _apply_fixed_target(execute=True)
-
-            canvas.bind("<B1-Motion>", _on_drag)
-            canvas.bind("<ButtonRelease-1>", _on_release)
-
-        _bind_plane(xy, "X", "Y")
-        _bind_plane(xz, "X", "Z")
-        _bind_plane(yz, "Y", "Z")
-
         def _sync_fixed_tcp_modes(*_args):
             if getattr(self, "_fixed_tcp_guard", False):
                 return
@@ -2021,6 +2015,8 @@ class ExecuteApp(ttk.Frame):
                         self.fixed_tcp_exec_on_release.set(False)
                     if self.tcp_gcode_mode.get():
                         self.tcp_gcode_mode.set(False)
+                    if self.fixed_tcp_gamepad_mode.get():
+                        self.fixed_tcp_gamepad_mode.set(False)
                 else:
                     if not self.fixed_tcp_exec_on_release.get():
                         self.fixed_tcp_exec_on_release.set(True)
@@ -2039,6 +2035,25 @@ class ExecuteApp(ttk.Frame):
         self.fixed_tcp_enabled.trace_add("write", _sync_fixed_tcp_modes)
         self.tcp_gcode_mode.trace_add("write", _sync_fixed_tcp_modes)
         _sync_fixed_tcp_modes()
+
+        def _update_gp_point_notice(*_):
+            if self.fixed_tcp_mode.get() == "point" and self.fixed_tcp_gamepad_mode.get():
+                gp_point_lbl.configure(text="\u2192 Spitze zeigt auf Fixpunkt")
+            else:
+                gp_point_lbl.configure(text="")
+            # Reset RPY continuity cache when gamepad mode is toggled
+            if not self.fixed_tcp_gamepad_mode.get():
+                self._gp_tcp_prev_rpy = None
+
+        self.fixed_tcp_mode.trace_add("write", _update_gp_point_notice)
+        self.fixed_tcp_gamepad_mode.trace_add("write", _update_gp_point_notice)
+
+        def _auto_enable_gamepad_xyz(*_):
+            """Auto-enable Gamepad XYZ when Fixed TCP is manually turned on."""
+            if self.fixed_tcp_enabled.get() and not self.fixed_tcp_gamepad_mode.get():
+                self.fixed_tcp_gamepad_mode.set(True)
+
+        self.fixed_tcp_enabled.trace_add("write", _auto_enable_gamepad_xyz)
 
         def _fixed_preview_refresh(*_args):
             _update_fixed_gcode_preview()
@@ -3701,6 +3716,8 @@ $Report/Startup     - Show startup file loaded at boot
                     vis = getattr(self.board_detector, "last_vis", None)
                 if vis is not None and hasattr(self, "vision_right_label"):
                     img = Image.fromarray(vis)
+                    resampling = getattr(Image, "Resampling", Image)
+                    img = img.resize((300, 225), resampling.LANCZOS)
                     imgtk = ImageTk.PhotoImage(image=img)
                     self.vision_right_label.imgtk = imgtk
                     self.vision_right_label.configure(image=imgtk)
@@ -3790,11 +3807,10 @@ $Report/Startup     - Show startup file loaded at boot
 
     def _apply_profile_runtime_flags(self, log_note=True):
         self.profile_has_endstops = _profile_has_endstops(self.profile_name, self.profile_data)
-        is_custom_attr = getattr(self.client, "is_custom", True)
-        is_custom = bool(is_custom_attr() if callable(is_custom_attr) else is_custom_attr)
         axis_home_attr = getattr(self.client, "supports_axis_homing", False)
         can_axis_home = bool(axis_home_attr() if callable(axis_home_attr) else axis_home_attr)
-        can_global_home = not is_custom
+        global_home_attr = getattr(self.client, "supports_global_homing", True)
+        can_global_home = bool(global_home_attr() if callable(global_home_attr) else global_home_attr)
         for btn in getattr(self, "_homing_global_buttons", []):
             try:
                 btn.configure(state=("normal" if can_global_home else "disabled"))
@@ -4854,11 +4870,11 @@ $Report/Startup     - Show startup file loaded at boot
                             except ValueError:
                                 pass
 
-                elif part.startswith("Pn:") and self.client.supports_endstops and self.profile_has_endstops:
+                elif part.startswith("Pn:") and self.client.supports_endstops:
                     endstop_active = set(part[3:])
 
             # --- Endstops are meaningful only with FluidNC ---
-            if self.client.supports_endstops and self.profile_has_endstops and endstop_active is not None:
+            if self.client.supports_endstops and endstop_active is not None:
                 for ax in AXES:
                     if ax in self.axis_endstop_icons:
                         c, oval, state_old = self.axis_endstop_icons[ax]
@@ -4951,6 +4967,145 @@ $Report/Startup     - Show startup file loaded at boot
         for ax in AXES:
             self.axis_labels[ax].configure(text=f"{self.axis_positions[ax]:.3f}")
 
+
+    # ============================================================
+    # GAMEPAD  Fixed-TCP XYZ movement (called via after() from gamepad thread)
+    # ============================================================
+    def move_fixed_tcp_gamepad(self, dx, dy, dz, feed=3000):
+        """Accumulate incremental XYZ offset and execute a fixed-TCP IK move.
+        Called on the main thread via widget.after(0, ...) from the gamepad thread.
+        Uses the supplied feed rate (from speed_val) instead of fixed_tcp_feed so
+        the robot buffer stays pre-filled and motion is smooth."""
+        if not getattr(self, "fixed_tcp_enabled", None) or not self.fixed_tcp_enabled.get():
+            return
+        if not getattr(self, "fixed_tcp_gamepad_mode", None) or not self.fixed_tcp_gamepad_mode.get():
+            return
+        try:
+            try:
+                _lim = max(10.0, float(self.fixed_tcp_max_dist.get()))
+            except Exception:
+                _lim = 300.0
+            def _c(v):
+                return max(-_lim, min(_lim, float(v)))
+            self.fixed_tcp_dx.set(_c(self.fixed_tcp_dx.get() + dx))
+            self.fixed_tcp_dy.set(_c(self.fixed_tcp_dy.get() + dy))
+            self.fixed_tcp_dz.set(_c(self.fixed_tcp_dz.get() + dz))
+            if hasattr(self, "_fixed_tcp_calc_target") and hasattr(self, "kinematics_tabs"):
+                x, y, z, roll, pitch, yaw, _, _, _ = self._fixed_tcp_calc_target()
+                # Normalize RPY to be closest to previous values → prevents ±180 jumps
+                prev_rpy = getattr(self, "_gp_tcp_prev_rpy", None)
+                if prev_rpy is not None:
+                    def _wrap_closest(angle, ref):
+                        d = (angle - ref + 180.0) % 360.0 - 180.0
+                        return ref + d
+                    roll = _wrap_closest(roll, prev_rpy[0])
+                    pitch = _wrap_closest(pitch, prev_rpy[1])
+                    yaw = _wrap_closest(yaw, prev_rpy[2])
+                self._gp_tcp_prev_rpy = (roll, pitch, yaw)
+                prev = getattr(self, "_vis_skip_kin", False)
+                self._vis_skip_kin = True
+                try:
+                    self.kinematics_tabs.move_tcp_pose(
+                        x, y, z, roll, pitch, yaw,
+                        feed=int(feed),
+                        allow_out_of_limits=False,
+                    )
+                finally:
+                    self._vis_skip_kin = prev
+        except Exception as e:
+            try:
+                self.log(f"[Gamepad TCP] {e}")
+            except Exception:
+                pass
+
+    # ============================================================
+    # GAMEPAD  Multi-Mode Cycle  (RT = next mode)
+    # Modes: 0=Normal  1=Fixed/Tool  2=Fixed/Point
+    # ============================================================
+    _GP_MODE_LABELS = ["Normal", "Fixed/Tool", "Fixed/Point"]
+    _GP_MODE_COLORS = ["#455a64", "#1565c0", "#6a1b9a"]
+
+    def set_gamepad_mode_cycle(self, mode: int):
+        """Cycle to the given gamepad mode and update UI state."""
+        global _gp_mode_var, _gp_mode_lbl
+        mode = int(mode) % 3
+        self.gamepad_mode_cycle.set(mode)
+        label = self._GP_MODE_LABELS[mode]
+        color = self._GP_MODE_COLORS[mode]
+        try:
+            _gp_mode_var.set(f"GP: {label}")
+            _gp_mode_lbl.configure(bg=color)
+        except Exception:
+            pass
+        self._gp_tcp_prev_rpy = None
+        if mode == 0:
+            if getattr(self, "fixed_tcp_gamepad_mode", None):
+                self.fixed_tcp_gamepad_mode.set(False)
+            if getattr(self, "fixed_tcp_enabled", None):
+                self.fixed_tcp_enabled.set(False)
+        elif mode == 1:
+            if getattr(self, "fixed_tcp_enabled", None):
+                self.fixed_tcp_enabled.set(True)
+            if getattr(self, "fixed_tcp_mode", None):
+                self.fixed_tcp_mode.set("tool")
+            if getattr(self, "fixed_tcp_gamepad_mode", None):
+                self.fixed_tcp_gamepad_mode.set(True)
+        elif mode == 2:
+            if getattr(self, "fixed_tcp_enabled", None):
+                self.fixed_tcp_enabled.set(True)
+            if getattr(self, "fixed_tcp_mode", None):
+                self.fixed_tcp_mode.set("point")
+            if getattr(self, "fixed_tcp_gamepad_mode", None):
+                self.fixed_tcp_gamepad_mode.set(True)
+        try:
+            self.log(f"[Gamepad] Mode \u2192 {label}")
+        except Exception:
+            pass
+
+    # ============================================================
+    # GAMEPAD  Fix from current TCP  (LT full press)
+    # ============================================================
+    def fix_tcp_from_gamepad(self):
+        """LT: capture current TCP as fixed origin (same as GUI button) & optionally set Point."""
+        mode = int(self.gamepad_mode_cycle.get()) if getattr(self, "gamepad_mode_cycle", None) else 0
+        # Call the same function as the GUI "Fix from current TCP" button
+        fn = getattr(self, "_update_fixed_from_tcp_fn", None)
+        if fn is not None:
+            try:
+                fn()
+            except Exception:
+                pass
+        self._gp_tcp_prev_rpy = None
+        # In Point mode: additionally set the TCP point target from current position
+        if mode == 2:
+            pt_fn = getattr(self, "_set_tcp_point_from_current_fn", None)
+            if pt_fn is not None:
+                try:
+                    pt_fn()
+                except Exception:
+                    pass
+        try:
+            self.log("[Gamepad] Fix from current TCP")
+        except Exception:
+            pass
+
+    # ============================================================
+    # GAMEPAD  Tool Roll  (D-Pad left/right in fixed modes 1 & 2)
+    # ============================================================
+    def rotate_fixed_tcp_roll(self, delta_deg: float):
+        """Increment fixed TCP roll angle and re-apply (tool rotation in fixed modes)."""
+        if not getattr(self, "fixed_tcp_enabled", None) or not self.fixed_tcp_enabled.get():
+            return
+        try:
+            cur_roll = float(self.fixed_tcp_roll.get())
+            self.fixed_tcp_roll.set(cur_roll + delta_deg)
+            if hasattr(self, "_fixed_tcp_apply_target"):
+                self._fixed_tcp_apply_target(execute=True)
+        except Exception as e:
+            try:
+                self.log(f"[Gamepad Roll] {e}")
+            except Exception:
+                pass
 
     # ============================================================
     # GAMEPAD  ExecuteApp Dispatcher
@@ -5057,7 +5212,7 @@ $Report/Startup     - Show startup file loaded at boot
 
     def _tick_status_poll(self):
         if self.poll_positions.get():
-            try: self.client.send_line("(TM)")
+            try: self.client.send_line(self.client.status_query_line())
             except Exception as e:
                 print("[Warn]", e)
         cur = (self.status_block_var.get() or "")
@@ -5067,6 +5222,12 @@ $Report/Startup     - Show startup file loaded at boot
 # ---- App-Instanz ----
 execute_app = ExecuteApp(root, client, ACTIVE_PROFILE["name"], ACTIVE_PROFILE["data"])
 execute_app.pack(fill="both", expand=True)
+
+# Klick auf Gamepad-Modus-Label cyclet den Modus (wie RT am Controller)
+def _gp_label_click(_event=None):
+    cur = int(execute_app.gamepad_mode_cycle.get())
+    execute_app.set_gamepad_mode_cycle((cur + 1) % 3)
+_gp_mode_lbl.bind("<Button-1>", _gp_label_click)
 
 def on_close():
     try:
