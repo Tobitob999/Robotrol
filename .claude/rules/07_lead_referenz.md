@@ -1,0 +1,1 @@
+/mnt/NAS5/Projekte/Lead/standards/07_lead_referenz.md

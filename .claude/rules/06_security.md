@@ -1,0 +1,1 @@
+/mnt/NAS5/Projekte/Lead/standards/06_security.md

@@ -1,0 +1,1 @@
+from robotrol.pickplace.learning.tnt_self_learning import TntSelfLearningManager

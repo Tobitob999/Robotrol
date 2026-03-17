@@ -1,0 +1,1 @@
+/mnt/NAS5/Projekte/Lead/standards/01_grundregeln.md

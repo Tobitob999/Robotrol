@@ -1,0 +1,26 @@
+# Environment
+.env
+.env.*
+config/.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+
+# Data (Laufzeitdaten nicht committen)
+data/inbox/auftraege/
+data/inbox/archiv/

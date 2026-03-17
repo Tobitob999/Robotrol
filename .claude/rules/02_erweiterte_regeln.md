@@ -1,0 +1,1 @@
+/mnt/NAS5/Projekte/Lead/standards/02_erweiterte_regeln.md
